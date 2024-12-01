@@ -7,8 +7,6 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Passes/PassPlugin.h>
 
-// #include <unordered_set>
-
 // #include "RegisterPackerContext.h"
 
 namespace {
@@ -61,7 +59,7 @@ public:
 
     llvm::LLVMContext& Ctx = F.getContext();
     llvm::IRBuilder<> Builder(Ctx);
-    llvm::DenseMap<llvm::Value*, llvm::Value*> PackMap;
+    llvm::DenseMap<llvm::Value*, std::pair<llvm::Value*, size_t>> PackMap;
     
 
     for (auto& BB : F) {
@@ -82,8 +80,11 @@ public:
 
           if (ToPack.size() == 2) {
             llvm::Value *Packed = doPack32(ToPack, Builder, Ctx);
-            for (auto *P : ToPack) {
-              PackMap[P] = Packed;
+            // for (auto *P : ToPack) {
+            //   PackMap[P] = Packed;
+            // }
+            for (size_t i = 0; i < ToPack.size(); i++) {
+              PackMap[ToPack[i]] = std::make_pair(Packed, i);
             }
             ToPack.clear();
           }
@@ -115,17 +116,33 @@ public:
 
       if (ToPack.size() > 1) {
         llvm::Value* Packed = doPack32(ToPack, Builder, Ctx);
-        for (auto* Scalar : ToPack) {
-          PackMap[Scalar] = Packed;
+        for (size_t i = 0; i < ToPack.size(); i++) {
+          PackMap[ToPack[i]] = std::make_pair(Packed, i);
         }
+        // for (auto* Scalar : ToPack) {
+        //   PackMap[Scalar] = Packed;
+        // }
       }
     }
 
-    for (auto &[Orig, Packed] : PackMap) {
-      // TODO: index 0 is not right
+    for (auto &[Orig, Pair] : PackMap) {
+      llvm::Value* Packed = Pair.first;
+      size_t Index = Pair.second;
+
       // auto begin = Orig->users().begin();
-      llvm::Value* Unpacked = doUnpack32(Packed, 0, Builder, Ctx);
-      //Orig->replaceAllUsesWith(Unpacked);
+      llvm::Value* Unpacked = doUnpack32(Packed, Index, Builder, Ctx);
+      // Orig->replaceAllUsesWith(Unpacked);
+      for (auto &use : Orig->uses()) {
+        // user must come AFTER Packed!
+        auto userInstr = dyn_cast<llvm::Instruction>(use.getUser());
+        if (!userInstr) continue;
+
+        if (auto *PackedInstr = dyn_cast<llvm::Instruction>(Packed)) {
+          if (PackedInstr->getParent() == userInstr->getParent() && PackedInstr->comesBefore(userInstr)) {
+            use.set(Unpacked);
+          }
+        }
+      }
     }
 
     llvm::errs() << "\n\n" << F;

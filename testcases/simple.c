@@ -18,9 +18,9 @@
 //   printf("a: %d\n", a);
 // }
 
-extern int return_5();
+int return_5() { return 5; }
 
-extern int return_7();
+int return_7() { return 7; }
 
 int main() {
   int a = return_5();
@@ -28,7 +28,5 @@ int main() {
 
   return a + b;
 
-  // printf
-  
   // return 0;
 }
