@@ -3,11 +3,9 @@
 
 
 
-class RegisterPacker {
+class RegisterPackerContext {
 public:
-
-private:
-    llvm::
+    unsigned pointer_size;
 };
 
 

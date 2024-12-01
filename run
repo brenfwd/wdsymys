@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+case "$(uname -s)" in
+  Darwin)
+    DYLIB_EXTENSION=dylib
+    ;;
+  *)
+    DYLIB_EXTENSION=so
+    ;;
+esac
+
+opt \
+  -load-pass-plugin=.build/wdsymys.${DYLIB_EXTENSION} \
+  -passes=wdsymys -S \
+  -o - < $1

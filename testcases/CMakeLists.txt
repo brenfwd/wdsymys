@@ -1,0 +1,34 @@
+set(TESTCASES "")
+file(GLOB TEST_SRCS CONFIGURE_DEPENDS "*.cpp")
+message(STATUS "TEST_SRCS: ${TEST_SRCS}")
+
+foreach(TEST_SRC ${TEST_SRCS})
+    cmake_path(GET TEST_SRC STEM TEST_NAME)
+    message(STATUS "TEST: ${TEST_NAME}")
+    ADD_CUSTOM_COMMAND(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.ll
+        COMMAND clang -c -Xclang -disable-O0-optnone -emit-llvm ${TEST_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.ll
+        DEPENDS ${TEST_SRC}
+    )
+    ADD_CUSTOM_COMMAND(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.opt.bc
+        COMMAND opt -load-pass-plugin=build/wdsymys/WDSYMYS.dylib -passes=wdsymys ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.ll -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.opt.bc
+        DEPENDS ${TEST_NAME}.ll WDSYMYS
+    )
+    ADD_CUSTOM_COMMAND(
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}
+        COMMAND clang ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.opt.bc -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.opt.bc
+    )
+
+    message(STATUS "file: ${CMAKE_CURRENT_BINARY_DIR}")
+    ADD_CUSTOM_TARGET(${TEST_NAME} DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME})
+    list(APPEND TESTCASES ${TEST_NAME})
+endforeach()  
+
+message(STATUS "TESTCASES: ${TESTCASES}")
+
+ADD_CUSTOM_COMMAND(
+    OUTPUT testcases
+    DEPENDS ${TESTCASES}
+)
