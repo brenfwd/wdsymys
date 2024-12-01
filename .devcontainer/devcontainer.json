@@ -1,4 +1,14 @@
 {
   "name": "CSE 583",
-  "dockerFile": "Dockerfile"
+  "dockerFile": "Dockerfile",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "llvm-vs-code-extensions.vscode-clangd"
+      ],
+      "settings": {
+        "clangd.path": "clangd"
+      }
+    }
+  }
 }

@@ -25,7 +25,7 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 # Build LLVM from source
 RUN mkdir /tmp/llvm/llvm/build
 RUN cd /tmp/llvm/llvm/build && \
-  cmake -DLLVM_ENABLE_PROJECTS="clang;compiler-rt" -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_LINKER=lld -S llvm -G "Ninja" ../llvm
+  cmake -DLLVM_ENABLE_PROJECTS="clang;compiler-rt;clang-tools-extra" -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_LINKER=lld -S llvm -G "Ninja" ../llvm
 RUN cd /tmp/llvm/llvm/build && \
   ninja install -j$(nproc)
 
@@ -37,9 +37,6 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive && \
 
 # Overwrite .bashrc
 RUN echo > /root/.bashrc
-
-# Install Bun
-RUN curl -fsSL https://bun.sh/install | bash
 
 # Download dotfiles
 RUN git clone https://github.com/brenfwd/dotfiles.git /root/dotfiles
