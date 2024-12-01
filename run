@@ -14,4 +14,4 @@ esac
 opt \
   -load-pass-plugin=.build/wdsymys.${DYLIB_EXTENSION} \
   -passes=wdsymys -S \
-  -o - < $1
+  -o /dev/null < $1

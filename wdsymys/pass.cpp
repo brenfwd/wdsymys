@@ -1,5 +1,3 @@
-#include <iostream>
-
 #include <llvm/Analysis/LazyValueInfo.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/LoopPass.h>
@@ -29,31 +27,22 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
 
     for (auto& BB : F) {
       llvm::errs() << "Basic Block: " << BB.getName() << "\n";
+      llvm::errs() << BB << "\n\n";
 
       // Iterate through each instruction in the basic block
       for (auto& I : BB) {
-        llvm::errs() << "Instruction: " << I << "\n";
-
-        if (auto* Load = dyn_cast<llvm::LoadInst>(&I)) {
-          llvm::Value* V = Load;
-          llvm::ConstantRange CR = LVI.getConstantRange(V, &BB);
-
-          llvm::errs() << "Instruction:\t" << I << "\n";
-          llvm::errs() << "Value range:\t" << CR << "\n";
-        }
+        // llvm::errs() << "Instruction: " << I << "\n";
 
         // Iterate through operands of the instruction
-        for (auto& U : I.operands()) {
-          auto* V = U.get();
-          if (!V->getType()->isIntegerTy() &&
-              !V->getType()->isFloatingPointTy()) {
-            llvm::errs() << "Skipping instruction: " << I << "\n";
-            continue;
-          }
-
-          llvm::errs() << "Value range: " << LVI.getConstantRange(V, &I, true)
-                       << "\n";
+        llvm::Value* V = &I;
+        if (!V->getType()->isIntegerTy() &&
+            !V->getType()->isFloatingPointTy()) {
+          continue;
         }
+
+        llvm::errs() << "INSTR:              " << I << "\n"
+                     << "CONSTANT RANGE:     "
+                     << LVI.getConstantRange(V, &I, true) << "\n\n";
       }
     }
     return llvm::PreservedAnalyses::all();
