@@ -2,16 +2,4 @@
 
 set -euxo pipefail
 
-case "$(uname -s)" in
-  Darwin)
-    DYLIB_EXTENSION=dylib
-    ;;
-  *)
-    DYLIB_EXTENSION=so
-    ;;
-esac
-
-opt \
-  -load-pass-plugin=.build/wdsymys.${DYLIB_EXTENSION} \
-  -passes=wdsymys -S \
-  -o /dev/null < $1
+cmake -B build -G Ninja && cmake --build build --target testcases/$1

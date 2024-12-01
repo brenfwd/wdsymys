@@ -3,22 +3,32 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-void test() {
+// void test() {
 
-  int a = 5;
-  ++a;
-  ++a;
-  ++a;
+//   int a = 5;
+//   // ++a;
+//   // ++a;
+//   // ++a;
 
-  // int a = 5;
-  // for (int i = 0; i < 10; i++) {
-  //   a += i;
-  // }
+//   // int a = 5;
+//   // for (int i = 0; i < 10; i++) {
+//   //   a += i;
+//   // }
 
-  printf("a: %d\n", a);
-}
+//   printf("a: %d\n", a);
+// }
+
+extern int return_5();
+
+extern int return_7();
 
 int main() {
-  int a = 5;
-  return 0;
+  int a = return_5();
+  int b = return_7();
+
+  return a + b;
+
+  // printf
+  
+  // return 0;
 }

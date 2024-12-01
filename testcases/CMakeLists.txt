@@ -10,8 +10,8 @@ foreach(TEST_SRC ${TEST_SRCS})
         COMMAND clang -c -Xclang -disable-O0-optnone -emit-llvm ${TEST_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.ll
         DEPENDS ${TEST_SRC}
     )
-    ADD_CUSTOM_COMMAND(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.opt.bc
+    ADD_CUSTOM_TARGET(
+        ${TEST_NAME}.opt.bc
         COMMAND opt -load-pass-plugin=${WDSYMYS_PLUGIN_PATH} -passes=mem2reg,wdsymys ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.ll -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.opt.bc
         DEPENDS ${TEST_NAME}.ll WDSYMYS
     )
