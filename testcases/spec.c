@@ -1,4 +1,4 @@
-#include <cstdint>
+#include <stdint.h>
 
 uint8_t process_sensor_data(uint8_t *data, uint16_t length) {
     uint32_t checksum = 0; // by analysis, checksum is actually [0, 255]
@@ -14,5 +14,12 @@ uint8_t process_sensor_data(uint8_t *data, uint16_t length) {
 
     result ^= checksum;  // Combine result with checksum for a final value
 
+    return result;
+}
+
+int main() {
+    uint8_t data[5] = {1, 2, 3, 4, 5};
+    uint16_t length = 5;
+    uint8_t result = process_sensor_data(data, length);
     return result;
 }

@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_BUILD_TYPE Debug)
 
+add_compile_options(-g)
+
 set(LLVM_PATH "/opt/homebrew/opt/llvm")
 find_package(LLVM REQUIRED CONFIG PATHS ${LLVM_PATH}) # TODO: brew-independent
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
