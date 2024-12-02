@@ -1,6 +1,8 @@
+#include <stdlib.h>
+
 struct ListNode {
-    ListNode* next;
-    ListNode* prev;
+    struct ListNode* next;
+    struct ListNode* prev;
     int val;
 };
 
@@ -9,16 +11,16 @@ void generate_spills() {
     // Declare many variables
     int a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z;
     // Arrays of large size
-    ListNode head;
+    struct ListNode head;
     head.val = 0;
     head.next = 0;
     head.prev = 0;
 
-    ListNode* curr = &head;
+    struct ListNode* curr = &head;
     
     // Fill arrays with some values
     for (int i = 0; i < 1000; ++i) {
-        ListNode* n = malloc(sizeof(ListNode));
+        struct ListNode* n = malloc(sizeof(struct ListNode));
         n->val = i;
         curr->next = n;
         n->prev = curr;
@@ -29,7 +31,7 @@ void generate_spills() {
     a = b = c = d = e = f = g = h = i = j = k = l = m = n = o = p = q = r = s = t = u = v = w = x = y = z = 1;
     int pain = a * b * c * d * e * f * g * h * i * j * k * l * m * n * o * p * q * r * s * t * u * v *w * x * y * z;
     int sum = 0;
-    ListNode* curr = &head;
+    curr = &head;
     for (int i = 0; i < 1000; ++i) {
         sum += curr->val;
         curr = curr->next;
