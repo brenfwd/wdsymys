@@ -15,14 +15,25 @@ using llvm::Value, llvm::Type, llvm::Instruction, llvm::SmallVector,
     llvm::DenseMap, llvm::errs;
 
 struct WDSYMYSPacking {
-  int bits_remaining = 64;
+  int bits_remaining;
   // Max size of 8 * 8 bit values for a 64 bit reg
   llvm::SmallVector<llvm::Value*, 8> to_pack;
+
+  WDSYMYSPacking() {
+    bits_remaining = 64;
+  }
 
   void clear() {
     bits_remaining = 64;
     to_pack.clear();
   }
+};
+
+// std::pairs do not bring me joy
+struct PackedVal {
+  llvm::Value*       packedVal; 
+  size_t             pos;
+  llvm::IntegerType* type;
 };
 
 struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
@@ -35,6 +46,24 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
   // }
 
  private:
+  llvm::Value* doPack(llvm::SmallVector<llvm::Value*, 8>& ToPack,
+                        llvm::IRBuilder<>& Builder, llvm::LLVMContext& Ctx) {
+    llvm::Type* I64 = llvm::Type::getInt64Ty(Ctx);
+    llvm::Value* PackedValue = llvm::ConstantInt::get(I64, 0);
+
+    for (size_t i = 0; i < ToPack.size(); i++) {
+      llvm::IntegerType* type = static_cast<llvm::IntegerType*>(ToPack[i]->getType());
+      unsigned sz = type->getBitWidth();
+
+      Builder.SetInsertPoint(
+          static_cast<llvm::Instruction*>(ToPack[i])->getNextNode());
+      llvm::Value* Ext = Builder.CreateZExt(ToPack[i], I64, "ext");
+      llvm::Value* Shifted = Builder.CreateShl(
+          Ext, llvm::ConstantInt::get(I64, i * 32), "shifted");
+      PackedValue = Builder.CreateOr(PackedValue, Shifted, "packed");
+    }
+    return PackedValue;
+  }
   llvm::Value* doPack32(llvm::SmallVector<llvm::Value*, 8>& ToPack,
                         llvm::IRBuilder<>& Builder, llvm::LLVMContext& Ctx) {
     llvm::Type* I64 = llvm::Type::getInt64Ty(Ctx);
@@ -52,6 +81,18 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
     return PackedValue;
   }
 
+  llvm::Value* doUnpack(llvm::Value* Packed, size_t Index,
+                          llvm::IntegerType* type,
+                          llvm::IRBuilder<>& Builder,
+                          llvm::LLVMContext& Context) {
+    llvm::Type* I64 = llvm::Type::getInt64Ty(Context);
+
+    Builder.SetInsertPoint(
+        static_cast<llvm::Instruction*>(Packed)->getNextNode());
+    llvm::Value* Shifted = Builder.CreateLShr(
+        Packed, llvm::ConstantInt::get(I64, Index), "unpack_shifted");
+    return Builder.CreateTrunc(Shifted, type, "unpacked");
+  }
   llvm::Value* doUnpack32(llvm::Value* Packed, size_t Index,
                           llvm::IRBuilder<>& Builder,
                           llvm::LLVMContext& Context) {
@@ -72,10 +113,10 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
 
     llvm::LLVMContext& Ctx = F.getContext();
     llvm::IRBuilder<> Builder(Ctx);
-    llvm::DenseMap<llvm::Value*, std::pair<llvm::Value*, size_t>> PackMap;
+    llvm::DenseMap<llvm::Value*, PackedVal> PackMap;
 
     for (auto& BB : F) {
-      WDSYMYSPacking ToPack;
+      WDSYMYSPacking* ToPack = new WDSYMYSPacking();
 
       llvm::errs() << "Basic Block: " << BB.getName() << "\n";
       llvm::errs() << BB << "\n\n";
@@ -88,16 +129,21 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
           if (!llvm::isa<llvm::PHINode>(&I)) {
             unsigned sz = type->getBitWidth();
 
-            if (ToPack.bits_remaining >= sz) {
-              ToPack.bits_remaining -= sz;
-              ToPack.to_pack.push_back(&I);
+            if (ToPack->bits_remaining >= sz) {
+              ToPack->bits_remaining -= sz;
+              ToPack->to_pack.push_back(&I);
             } else {
-              llvm::Value* Packed = doPack32(ToPack.to_pack, Builder, Ctx);
+              llvm::Value* Packed = doPack(ToPack->to_pack, Builder, Ctx);
 
-              for (size_t i = 0; i < ToPack.to_pack.size(); i++) {
-                PackMap[ToPack.to_pack[i]] = std::make_pair(Packed, i);
+              size_t currPos = 0;
+              for (size_t i = 0; i < ToPack->to_pack.size(); i++) {
+                llvm::IntegerType* type = static_cast<llvm::IntegerType*>(ToPack->to_pack[i]->getType());
+                PackMap[ToPack->to_pack[i]] = {Packed, currPos, type};
+
+                size_t sz = type->getBitWidth();
+                currPos += sz;
               }
-              ToPack.clear();
+              ToPack->clear();
             }
           }
         }
@@ -123,13 +169,18 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
         //              << "\n\n";
       }
 
-      if (ToPack.to_pack.size() > 1) {
-        llvm::Value* Packed = doPack32(ToPack.to_pack, Builder, Ctx);
+      if (ToPack->to_pack.size() > 1) {
+        llvm::Value* Packed = doPack(ToPack->to_pack, Builder, Ctx);
 
-        for (size_t i = 0; i < ToPack.to_pack.size(); i++) {
-          PackMap[ToPack.to_pack[i]] = std::make_pair(Packed, i);
+        size_t currPos = 0;
+        for (size_t i = 0; i < ToPack->to_pack.size(); i++) {
+          llvm::IntegerType* type = static_cast<llvm::IntegerType*>(ToPack->to_pack[i]->getType());
+          PackMap[ToPack->to_pack[i]] = {Packed, currPos, type};
+
+          size_t sz = type->getBitWidth();
+          currPos += sz;
         }
-        ToPack.clear();
+        ToPack->clear();
       }
     }
 
@@ -168,11 +219,12 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
     // }
 
     for (auto& [Orig, Pair] : PackMap) {
-      llvm::Value* Packed = Pair.first;
-      size_t Index = Pair.second;
+      llvm::Value* Packed = Pair.packedVal;
+      size_t Index = Pair.pos;
+      llvm::IntegerType* type = Pair.type;
 
       // auto begin = Orig->users().begin();
-      llvm::Value* Unpacked = doUnpack32(Packed, Index, Builder, Ctx);
+      llvm::Value* Unpacked = doUnpack(Packed, Index, type, Builder, Ctx);
       // Orig->replaceAllUsesWith(Unpacked);
       for (auto& use : Orig->uses()) {
         // user must come AFTER Packed!
