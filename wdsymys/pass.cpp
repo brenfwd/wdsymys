@@ -16,7 +16,13 @@ using llvm::Value, llvm::Type, llvm::Instruction, llvm::SmallVector,
 
 struct WDSYMYSPacking {
   int bits_remaining = 64;
-  llvm::SmallVector<llvm::Value*, 4> to_pack;
+  // Max size of 8 * 8 bit values for a 64 bit reg
+  llvm::SmallVector<llvm::Value*, 8> to_pack;
+
+  void clear() {
+    bits_remaining = 64;
+    to_pack.clear();
+  }
 };
 
 struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
@@ -29,7 +35,7 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
   // }
 
  private:
-  llvm::Value* doPack32(llvm::SmallVector<llvm::Value*, 4>& ToPack,
+  llvm::Value* doPack32(llvm::SmallVector<llvm::Value*, 8>& ToPack,
                         llvm::IRBuilder<>& Builder, llvm::LLVMContext& Ctx) {
     llvm::Type* I64 = llvm::Type::getInt64Ty(Ctx);
     llvm::Value* PackedValue = llvm::ConstantInt::get(I64, 0);
@@ -69,7 +75,7 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
     llvm::DenseMap<llvm::Value*, std::pair<llvm::Value*, size_t>> PackMap;
 
     for (auto& BB : F) {
-      llvm::SmallVector<llvm::Value*, 4> ToPack;
+      WDSYMYSPacking ToPack;
 
       llvm::errs() << "Basic Block: " << BB.getName() << "\n";
       llvm::errs() << BB << "\n\n";
@@ -78,21 +84,21 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
       for (auto& I : BB) {
         Builder.SetInsertPoint(&I);
         // llvm::errs() << "Instruction: " << I << "\n";
+        if (llvm::IntegerType* type = dyn_cast<llvm::IntegerType>(I.getType())) {
+          if (!llvm::isa<llvm::PHINode>(&I)) {
+            unsigned sz = type->getBitWidth();
 
-        if (I.getType()->isIntegerTy(32) && !llvm::isa<llvm::PHINode>(&I)) {
-          if (PackMap.count(&I) == 0) {
-            ToPack.push_back(&I);
-          }
+            if (ToPack.bits_remaining >= sz) {
+              ToPack.bits_remaining -= sz;
+              ToPack.to_pack.push_back(&I);
+            } else {
+              llvm::Value* Packed = doPack32(ToPack.to_pack, Builder, Ctx);
 
-          if (ToPack.size() == 2) {
-            llvm::Value* Packed = doPack32(ToPack, Builder, Ctx);
-            // for (auto *P : ToPack) {
-            //   PackMap[P] = Packed;
-            // }
-            for (size_t i = 0; i < ToPack.size(); i++) {
-              PackMap[ToPack[i]] = std::make_pair(Packed, i);
+              for (size_t i = 0; i < ToPack.to_pack.size(); i++) {
+                PackMap[ToPack.to_pack[i]] = std::make_pair(Packed, i);
+              }
+              ToPack.clear();
             }
-            ToPack.clear();
           }
         }
 
@@ -117,14 +123,13 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
         //              << "\n\n";
       }
 
-      if (ToPack.size() > 1) {
-        llvm::Value* Packed = doPack32(ToPack, Builder, Ctx);
-        for (size_t i = 0; i < ToPack.size(); i++) {
-          PackMap[ToPack[i]] = std::make_pair(Packed, i);
+      if (ToPack.to_pack.size() > 1) {
+        llvm::Value* Packed = doPack32(ToPack.to_pack, Builder, Ctx);
+
+        for (size_t i = 0; i < ToPack.to_pack.size(); i++) {
+          PackMap[ToPack.to_pack[i]] = std::make_pair(Packed, i);
         }
-        // for (auto* Scalar : ToPack) {
-        //   PackMap[Scalar] = Packed;
-        // }
+        ToPack.clear();
       }
     }
 
