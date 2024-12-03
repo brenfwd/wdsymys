@@ -2,8 +2,8 @@ set(TESTCASES "")
 file(GLOB TEST_SRCS CONFIGURE_DEPENDS "*.c")
 message(STATUS "TEST_SRCS: ${TEST_SRCS}")
 
-# set(TESTCASE_CC_FLAGS -O0 -Xclang -disable-O0-optnone)
-set(TESTCASE_CC_FLAGS -O1)
+set(TESTCASE_CC_FLAGS -O0 -Xclang -disable-O0-optnone)
+# set(TESTCASE_CC_FLAGS -O1)
 
 foreach(TEST_SRC ${TEST_SRCS})
     cmake_path(GET TEST_SRC STEM TEST_NAME)
