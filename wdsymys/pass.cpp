@@ -7,21 +7,39 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Passes/PassPlugin.h>
 
-// #include "RegisterPackerContext.h"
+#include <vector>
 
 namespace {
 
 using llvm::Value, llvm::Type, llvm::Instruction, llvm::SmallVector,
-    llvm::DenseMap, llvm::errs;
+    llvm::DenseMap, llvm::errs, llvm::IntegerType;
+
+IntegerType* getBestIntegerType(size_t BitWidth, llvm::LLVMContext& Ctx) {
+  return (BitWidth == 1)    ? Type::getInt1Ty(Ctx)
+         : (BitWidth <= 8)  ? Type::getInt8Ty(Ctx)
+         : (BitWidth <= 16) ? Type::getInt16Ty(Ctx)
+         : (BitWidth <= 32) ? Type::getInt32Ty(Ctx)
+                            : Type::getInt64Ty(Ctx);
+}
+
+// std::pairs do not bring me joy
+struct PackedVal {
+  Value* packedVal;
+  size_t startBit;
+  IntegerType* type;
+
+  PackedVal(Value* pv, size_t s, IntegerType* t)
+      : packedVal(pv), startBit(s), type(t) {}
+
+  PackedVal() : packedVal(nullptr), startBit(0), type(nullptr) {}
+};
 
 struct WDSYMYSPacking {
   int bits_remaining;
   // Max size of 8 * 8 bit values for a 64 bit reg
-  llvm::SmallVector<llvm::Value*, 8> to_pack;
+  llvm::SmallVector<PackedVal, 8> to_pack;
 
-  WDSYMYSPacking() {
-    bits_remaining = 64;
-  }
+  WDSYMYSPacking() : bits_remaining(64) {}
 
   void clear() {
     bits_remaining = 64;
@@ -29,153 +47,229 @@ struct WDSYMYSPacking {
   }
 };
 
-// std::pairs do not bring me joy
-struct PackedVal {
-  llvm::Value*       packedVal; 
-  size_t             pos;
-  llvm::IntegerType* type;
+struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
+ public:
+  llvm::PreservedAnalyses run(llvm::Function& F,
+                              llvm::FunctionAnalysisManager& FAM) {
+    llvm::LLVMContext& Ctx = F.getContext();
+    llvm::IRBuilder<> Builder(Ctx);
+    llvm::LazyValueInfo& LVI = FAM.getResult<llvm::LazyValueAnalysis>(F);
+
+    std::vector<Instruction*> InstructionsToRewrite;
+
+    errs() << F << "\n\n";
+
+    for (auto& BB : F) {
+      for (auto& I : BB) {
+        if (I.getOpcode() == llvm::Instruction::ZExt) {
+          continue;
+        }
+
+        if (I.getOpcode() == llvm::Instruction::SExt) {
+          continue;
+        }
+
+        if (I.getOpcode() == llvm::Instruction::Trunc) {
+          continue;
+        }
+
+        if (IntegerType* type = dyn_cast<IntegerType>(I.getType())) {
+          auto CR = LVI.getConstantRange(&I, &I, false);
+          size_t BitWidth = CR.getUpper().getActiveBits();
+          IntegerType* BestType = getBestIntegerType(BitWidth, Ctx);
+
+          // errs() << "Instruction:   " << I << "\n";
+          // errs() << "Range:         " << CR << "\n";
+          // errs() << "Bits required: " << BitWidth << "\n";
+          // errs() << "Best type:     " << *BestType << "\n";
+          // errs() << "\n";
+
+          if (BestType != I.getType()) {
+            I.mutateType(BestType);
+            InstructionsToRewrite.push_back(&I);
+
+            for (llvm::Use& Use : I.uses()) {
+              if (Instruction* UserInst = dyn_cast<Instruction>(Use.getUser())) {
+                InstructionsToRewrite.push_back(UserInst);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // errs() << F << "\n\n";
+
+    for (Instruction* UserInst : InstructionsToRewrite) {
+      unsigned int numOps = UserInst->getNumOperands();
+      if (numOps == 2) {
+        // Upcast smaller op type to bigger to prevent any flows
+        if (IntegerType* UserInstType =
+                dyn_cast<IntegerType>(UserInst->getType())) {
+          // Find largest type among operands and instruction type
+          IntegerType* LargestOperandType = UserInstType;
+          for (Value* Operand : UserInst->operands()) {
+            IntegerType* OperandType = cast<IntegerType>(Operand->getType());
+            if (OperandType->getBitWidth() >
+                    LargestOperandType->getBitWidth() &&
+                !isa<llvm::Constant>(Operand)) {
+              LargestOperandType = OperandType;
+            }
+
+            if (auto* ConstantOperand = dyn_cast<llvm::Constant>(Operand)) {
+              size_t ConstantBitWidth =
+                  ConstantOperand->getUniqueInteger().getActiveBits();
+              if (ConstantBitWidth > LargestOperandType->getBitWidth()) {
+                LargestOperandType = getBestIntegerType(ConstantBitWidth, Ctx);
+              }
+            }
+          }
+          // errs() << "Largest operand type of" << *UserInst << ": "
+          //        << *LargestOperandType << "\n";
+          // Upcast constants to match
+          for (llvm::Use& Operand : UserInst->operands()) {
+            if (auto* ConstantOperand = dyn_cast<llvm::Constant>(Operand)) {
+              // errs() << "The largest type is: " << *LargestOperandType << "\n";
+              llvm::Constant* NewConstant = llvm::ConstantInt::get(
+                  LargestOperandType, ConstantOperand->getUniqueInteger().trunc(
+                                          LargestOperandType->getBitWidth()));
+              // errs() << "Changed constant to have type "
+              //        << *NewConstant->getType() << ", should be "
+              //        << *LargestOperandType << "\n";
+              Operand.set(NewConstant);
+            } else if (Operand.get()->getType() != LargestOperandType) {
+              Builder.SetInsertPoint(UserInst);
+              llvm::Value* Ext =
+                  Builder.CreateSExt(Operand.get(), LargestOperandType, "sext");
+              Operand.set(Ext);
+            }
+          }
+
+          // Truncate instruction result if possible
+          if (UserInstType != LargestOperandType &&
+              UserInst->getOpcode() != llvm::Instruction::ICmp) {
+            Builder.SetInsertPoint(UserInst->getNextNode());
+            llvm::Value* Trunc =
+                Builder.CreateTrunc(UserInst, UserInstType, "trunc");
+            UserInst->mutateType(LargestOperandType);
+            for (auto& use : UserInst->uses()) {
+              if (use != Trunc) {
+                use.set(Trunc);
+              }
+            }
+          }
+        }
+        // else {
+        // yeah idk, this is fucked
+        // we put something in that we shouldn't have
+        // errs() << *Use << "\n";
+        // assert(false);
+        // }
+      } else if (UserInst->getOpcode() == Instruction::Ret) {
+        Type* FReturnType = F.getReturnType();
+        assert(FReturnType);
+        if (FReturnType != UserInst->getOperand(0)->getType()) {
+          Builder.SetInsertPoint(UserInst);
+          llvm::Value* Ext =
+              Builder.CreateSExt(UserInst->getOperand(0), FReturnType, "sext");
+          UserInst->setOperand(0, Ext);
+        }
+      }
+    }
+
+    return llvm::PreservedAnalyses::none();
+  }
 };
 
-struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
-  // RegisterPackerContext create_register_packer_context(llvm::Module& module) {
-  //   RegisterPackerContext context{
-  //       .pointer_size = module.getDataLayout().getPointerSizeInBits(),
-  //   };
-
-  //   return context;
-  // }
-
+struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
  private:
-  llvm::Value* doPack(llvm::SmallVector<llvm::Value*, 8>& ToPack,
-                        llvm::IRBuilder<>& Builder, llvm::LLVMContext& Ctx) {
+  llvm::Value* doPack(const llvm::SmallVector<PackedVal, 8>& ToPack,
+                      llvm::IRBuilder<>& Builder, llvm::LLVMContext& Ctx) {
     llvm::Type* I64 = llvm::Type::getInt64Ty(Ctx);
     llvm::Value* PackedValue = llvm::ConstantInt::get(I64, 0);
 
     for (size_t i = 0; i < ToPack.size(); i++) {
-      llvm::IntegerType* type = static_cast<llvm::IntegerType*>(ToPack[i]->getType());
-      unsigned sz = type->getBitWidth();
+      unsigned sz = ToPack[i].type->getBitWidth();
 
       Builder.SetInsertPoint(
-          static_cast<llvm::Instruction*>(ToPack[i])->getNextNode());
-      llvm::Value* Ext = Builder.CreateZExt(ToPack[i], I64, "ext");
+          static_cast<llvm::Instruction*>(ToPack[i].packedVal)->getNextNode());
+      llvm::Value* Ext = Builder.CreateZExt(ToPack[i].packedVal, I64, "ext");
       llvm::Value* Shifted = Builder.CreateShl(
-          Ext, llvm::ConstantInt::get(I64, i * 32), "shifted");
+          Ext, llvm::ConstantInt::get(I64, ToPack[i].startBit), "shifted");
       PackedValue = Builder.CreateOr(PackedValue, Shifted, "packed");
     }
     return PackedValue;
   }
-  llvm::Value* doPack32(llvm::SmallVector<llvm::Value*, 8>& ToPack,
-                        llvm::IRBuilder<>& Builder, llvm::LLVMContext& Ctx) {
-    llvm::Type* I64 = llvm::Type::getInt64Ty(Ctx);
-    llvm::Value* PackedValue = llvm::ConstantInt::get(I64, 0);
 
-    for (size_t i = 0; i < ToPack.size(); i++) {
-      Builder.SetInsertPoint(
-          static_cast<llvm::Instruction*>(ToPack[i])->getNextNode());
-      llvm::Value* Ext = Builder.CreateZExt(ToPack[i], I64, "ext");
-      llvm::Value* Shifted = Builder.CreateShl(
-          Ext, llvm::ConstantInt::get(I64, i * 32), "shifted");
-      PackedValue = Builder.CreateOr(PackedValue, Shifted, "packed");
-    }
-
-    return PackedValue;
-  }
-
-  llvm::Value* doUnpack(llvm::Value* Packed, size_t Index,
-                          llvm::IntegerType* type,
-                          llvm::IRBuilder<>& Builder,
-                          llvm::LLVMContext& Context) {
+  llvm::Value* doUnpack(llvm::Value* Packed, size_t Index, IntegerType* type,
+                        llvm::IRBuilder<>& Builder,
+                        llvm::LLVMContext& Context) {
     llvm::Type* I64 = llvm::Type::getInt64Ty(Context);
 
-    Builder.SetInsertPoint(
-        static_cast<llvm::Instruction*>(Packed)->getNextNode());
     llvm::Value* Shifted = Builder.CreateLShr(
         Packed, llvm::ConstantInt::get(I64, Index), "unpack_shifted");
     return Builder.CreateTrunc(Shifted, type, "unpacked");
-  }
-  llvm::Value* doUnpack32(llvm::Value* Packed, size_t Index,
-                          llvm::IRBuilder<>& Builder,
-                          llvm::LLVMContext& Context) {
-    llvm::Type* I64 = llvm::Type::getInt64Ty(Context);
-    llvm::Type* I32 = llvm::Type::getInt32Ty(Context);
-
-    Builder.SetInsertPoint(
-        static_cast<llvm::Instruction*>(Packed)->getNextNode());
-    llvm::Value* Shifted = Builder.CreateLShr(
-        Packed, llvm::ConstantInt::get(I64, Index * 32), "unpack_shifted");
-    return Builder.CreateTrunc(Shifted, I32, "unpacked");
   }
 
  public:
   llvm::PreservedAnalyses run(llvm::Function& F,
                               llvm::FunctionAnalysisManager& FAM) {
-    llvm::LazyValueInfo& LVI = FAM.getResult<llvm::LazyValueAnalysis>(F);
-
     llvm::LLVMContext& Ctx = F.getContext();
     llvm::IRBuilder<> Builder(Ctx);
     llvm::DenseMap<llvm::Value*, PackedVal> PackMap;
+    errs() << "skibidi called pack\n";
+    llvm::errs() << "\n\n" << F;
 
     for (auto& BB : F) {
       WDSYMYSPacking* ToPack = new WDSYMYSPacking();
 
-      llvm::errs() << "Basic Block: " << BB.getName() << "\n";
-      llvm::errs() << BB << "\n\n";
+      // llvm::errs() << "Basic Block: " << BB.getName() << "\n";
+      // llvm::errs() << BB << "\n\n";
 
       // Iterate through each instruction in the basic block
+      errs() << "skibidi 1\n";
       for (auto& I : BB) {
         Builder.SetInsertPoint(&I);
         // llvm::errs() << "Instruction: " << I << "\n";
-        if (llvm::IntegerType* type = dyn_cast<llvm::IntegerType>(I.getType())) {
+        if (IntegerType* type = dyn_cast<IntegerType>(I.getType())) {
           if (!llvm::isa<llvm::PHINode>(&I)) {
-            unsigned sz = type->getBitWidth();
+            size_t sz = type->getBitWidth();
 
-            if (ToPack->bits_remaining >= sz) {
-              ToPack->bits_remaining -= sz;
-              ToPack->to_pack.push_back(&I);
-            } else {
+            if (ToPack->bits_remaining < sz) {
               llvm::Value* Packed = doPack(ToPack->to_pack, Builder, Ctx);
 
               size_t currPos = 0;
               for (size_t i = 0; i < ToPack->to_pack.size(); i++) {
-                llvm::IntegerType* type = static_cast<llvm::IntegerType*>(ToPack->to_pack[i]->getType());
-                PackMap[ToPack->to_pack[i]] = {Packed, currPos, type};
+                IntegerType* type =
+                    static_cast<IntegerType*>(ToPack->to_pack[i].type);
+                PackMap.try_emplace(ToPack->to_pack[i].packedVal, Packed,
+                                    currPos, type);
 
-                size_t sz = type->getBitWidth();
-                currPos += sz;
+                size_t packed_value_sz = type->getBitWidth();
+                currPos += packed_value_sz;
               }
               ToPack->clear();
             }
+            ToPack->to_pack.emplace_back(&I, 64 - ToPack->bits_remaining,
+                                          type);
+            ToPack->bits_remaining -= sz;
           }
         }
-
-        // if (llvm::PHINode *Phi = dyn_cast<llvm::PHINode>(&I)) {
-        // }
-
-        // Iterate through operands of the instruction
-        // llvm::Value* V = &I;
-
-        // V->mutateType(llvm::Type::getInt8Ty(Ctx));
-
-        // if (!V->getType()->isIntegerTy()) {
-        //   continue;
-        // }
-
-        // llvm::ConstantRange constant_range = LVI.getConstantRange(V, &I, true);
-        // uint32_t bit_width = constant_range.getLower().getActiveBits();
-
-        // llvm::errs() << "INSTR:              " << I << "\n"
-        //              << "CONSTANT RANGE:     " << constant_range << "\n"
-        //              << "NUM BITS:           " << bit_width
-        //              << "\n\n";
       }
+      
+      errs() << "skibidi 2\n";
 
       if (ToPack->to_pack.size() > 1) {
         llvm::Value* Packed = doPack(ToPack->to_pack, Builder, Ctx);
 
         size_t currPos = 0;
         for (size_t i = 0; i < ToPack->to_pack.size(); i++) {
-          llvm::IntegerType* type = static_cast<llvm::IntegerType*>(ToPack->to_pack[i]->getType());
-          PackMap[ToPack->to_pack[i]] = {Packed, currPos, type};
+          IntegerType* type =
+              static_cast<IntegerType*>(ToPack->to_pack[i].type);
+          PackMap.try_emplace(ToPack->to_pack[i].packedVal, Packed, currPos,
+                              type);
+          PackMap[ToPack->to_pack[i].packedVal] =
+              PackedVal(Packed, currPos, type);
 
           size_t sz = type->getBitWidth();
           currPos += sz;
@@ -184,48 +278,11 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
       }
     }
 
-    // Replace uses with unpacked values
-    // for (auto& [Orig, Pair] : PackMap) {
-    //   Value* Packed = Pair.first;
-    //   size_t Index = Pair.second;
-
-    //   for (auto& use : Orig->uses()) {
-    //     llvm::User* U = use.getUser();
-    //     Instruction* UserInstr = dyn_cast<Instruction>(U);
-    //     if (!UserInstr)
-    //       continue;
-
-    //     if (llvm::PHINode* PHI = dyn_cast<llvm::PHINode>(UserInstr)) {
-    //       // Handle PHI nodes
-    //       for (unsigned i = 0; i < PHI->getNumIncomingValues(); ++i) {
-    //         if (PHI->getIncomingValue(i) != Orig)
-    //           continue;
-
-    //         llvm::BasicBlock* PredBB = PHI->getIncomingBlock(i);
-    //         Instruction* TermInst = PredBB->getTerminator();
-
-    //         llvm::IRBuilder<> LocalBuilder(TermInst);
-    //         Value* Unpacked = doUnpack32(Packed, Index, LocalBuilder, Ctx);
-    //         PHI->setIncomingValue(i, Unpacked);
-    //       }
-    //     } else {
-    //       // For normal instructions
-    //       errs() << "UserInstr for " << *Orig << " is " << *UserInstr << "\n"; 
-    //       llvm::IRBuilder<> LocalBuilder(UserInstr);
-    //       Value* Unpacked = doUnpack32(Packed, Index, LocalBuilder, Ctx);
-    //       use.set(Unpacked);
-    //     }
-    //   }
-    // }
-
     for (auto& [Orig, Pair] : PackMap) {
       llvm::Value* Packed = Pair.packedVal;
-      size_t Index = Pair.pos;
-      llvm::IntegerType* type = Pair.type;
+      size_t Index = Pair.startBit;
+      IntegerType* type = Pair.type;
 
-      // auto begin = Orig->users().begin();
-      llvm::Value* Unpacked = doUnpack(Packed, Index, type, Builder, Ctx);
-      // Orig->replaceAllUsesWith(Unpacked);
       for (auto& use : Orig->uses()) {
         // user must come AFTER Packed!
         auto userInstr = dyn_cast<llvm::Instruction>(use.getUser());
@@ -235,31 +292,35 @@ struct WDSYMYSPass : public llvm::PassInfoMixin<WDSYMYSPass> {
         if (auto* PackedInstr = dyn_cast<llvm::Instruction>(Packed)) {
           if (PackedInstr->getParent() == userInstr->getParent() &&
               PackedInstr->comesBefore(userInstr)) {
+            Builder.SetInsertPoint(userInstr);
+            llvm::Value* Unpacked = doUnpack(Packed, Index, type, Builder, Ctx);
             use.set(Unpacked);
           }
         }
       }
     }
 
+    errs() << "skibidi done\n";
     llvm::errs() << "\n\n" << F;
-
     return llvm::PreservedAnalyses::none();
   }
 };
 
 }  // namespace
 
-// -enable-misched -misched-bottom-up
-
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "HW2Pass", "v0.1",
+  return {LLVM_PLUGIN_API_VERSION, "WDSYMYS", "v0.1",
           [](llvm::PassBuilder& PB) {
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::FunctionPassManager& FPM,
                    llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  if (Name == "wdsymys") {
-                    FPM.addPass(WDSYMYSPass());
+                  if (Name == "wdsymys-lvi") {
+                    FPM.addPass(WDSYMYSLVIPass());
+                    return true;
+                  }
+                  if (Name == "wdsymys-packing") {
+                    FPM.addPass(WDSYMYSPackingPass());
                     return true;
                   }
                   return false;

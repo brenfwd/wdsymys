@@ -11,5 +11,5 @@ int main() {
     ++a;
   }
 
-  return a;
+  return a; // 11
 }

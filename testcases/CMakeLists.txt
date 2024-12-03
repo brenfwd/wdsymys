@@ -6,19 +6,49 @@ foreach(TEST_SRC ${TEST_SRCS})
     cmake_path(GET TEST_SRC STEM TEST_NAME)
     message(STATUS "TEST: ${TEST_NAME}")
     ADD_CUSTOM_COMMAND(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.ll
-        COMMAND clang -c -Xclang -disable-O0-optnone -emit-llvm ${TEST_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.ll
+        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc
+        COMMAND clang -c -Xclang -disable-O0-optnone -emit-llvm ${TEST_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc
         DEPENDS ${TEST_SRC}
     )
     ADD_CUSTOM_TARGET(
-        ${TEST_NAME}.opt.bc
-        COMMAND opt -load-pass-plugin=${WDSYMYS_PLUGIN_PATH} -passes=mem2reg,wdsymys ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.ll -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.opt.bc
-        DEPENDS ${TEST_NAME}.ll WDSYMYS
+        ${TEST_NAME}.m2r.bc
+        COMMAND opt -load-pass-plugin=${WDSYMYS_PLUGIN_PATH} -passes=mem2reg ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.bc
+        DEPENDS ${TEST_NAME}.bc
+    )
+    ADD_CUSTOM_TARGET(
+        ${TEST_NAME}.lvi.bc
+        COMMAND opt -load-pass-plugin=${WDSYMYS_PLUGIN_PATH} -passes=wdsymys-lvi ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.bc -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.lvi.bc
+        DEPENDS ${TEST_NAME}.m2r.bc WDSYMYS
+    )
+    ADD_CUSTOM_TARGET(
+        ${TEST_NAME}.packed.bc
+        COMMAND opt -load-pass-plugin=${WDSYMYS_PLUGIN_PATH} -passes=wdsymys-packing ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.lvi.bc -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.bc
+        DEPENDS ${TEST_NAME}.lvi.bc WDSYMYS
+    )
+    ADD_CUSTOM_TARGET(
+        ${TEST_NAME}.m2r.ll
+        COMMAND llvm-dis ${TEST_NAME}.m2r.bc -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.ll
+        DEPENDS ${TEST_NAME}.m2r.bc
+    )
+    ADD_CUSTOM_TARGET(
+        ${TEST_NAME}.lvi.ll
+        COMMAND llvm-dis ${TEST_NAME}.lvi.bc -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.lvi.ll
+        DEPENDS ${TEST_NAME}.lvi.bc
+    )
+    ADD_CUSTOM_TARGET(
+        ${TEST_NAME}.packed.ll
+        COMMAND llvm-dis ${TEST_NAME}.packed.bc -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.ll
+        DEPENDS ${TEST_NAME}.packed.bc
+    )
+    ADD_CUSTOM_TARGET(
+        ${TEST_NAME}.baseline
+        COMMAND clang ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.bc -O0 -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME} -fstack-usage && (objdump -d ${TEST_NAME} > ${TEST_NAME}.s)
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.bc ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.ll ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.lvi.ll ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.ll
     )
     ADD_CUSTOM_TARGET(
         ${TEST_NAME}
-        COMMAND clang ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.opt.bc -O0 -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}
-        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.opt.bc
+        COMMAND clang ${TEST_SRC} -O0 -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.baseline -fstack-usage -Xclang -stack-usage-file -Xclang ${TEST_NAME}.baseline.su && (objdump -d ${TEST_NAME}.baseline > ${TEST_NAME}.baseline.s)
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.bc ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.ll ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.lvi.ll ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.ll ${TEST_NAME}.baseline
     )
 
     list(APPEND TESTCASES ${TEST_NAME})
