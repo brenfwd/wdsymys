@@ -283,14 +283,34 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
           if (!llvm::isa<llvm::PHINode>(&I)) {
             if (I.hasOneUse()) {
               if (auto* UserInstruction = dyn_cast<Instruction>(*I.user_begin())) {
-                errs() << "yes\n";
-                if (std::unique_ptr<llvm::Dependence> Dep = Dependencies.depends(UserInstruction, &I, false)) {
-                  errs() << cast<llvm::SCEVConstant>(Dep->getDistance(0))->getAPInt().getZExtValue() << "\n";
-                  // if (Dep->getDistance(0) < 4) {
-                  //   continue;
-                  // }
+                int distance = 0;
+                bool foundFirst = false;
+
+                for (auto &It : BB) {
+                    if (&It == &I)
+                        foundFirst = true;
+                    else if (&It == UserInstruction) {
+                        distance = foundFirst ? distance : -1;
+                        break;
+                    }
+
+                    if (foundFirst)
+                        distance++;
                 }
+                if (distance < 4) {
+                  continue;
+                }
+
               }
+              //  {
+              //   errs() << "yes\n";
+              //   if (std::unique_ptr<llvm::Dependence> Dep = Dependencies.depends(UserInstruction, &I, false)) {
+              //     errs() << cast<llvm::SCEVConstant>(Dep->getDistance(0))->getAPInt().getZExtValue() << "\n";
+              //     // if (Dep->getDistance(0) < 4) {
+              //     //   continue;
+              //     // }
+              //   }
+              // }
             }
 
             size_t sz = type->getBitWidth();
