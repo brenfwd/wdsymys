@@ -3,10 +3,7 @@
   "dockerFile": "Dockerfile",
   "customizations": {
     "vscode": {
-      "extensions": [
-        "llvm-vs-code-extensions.vscode-clangd",
-        "ms-vsliveshare.vsliveshare"
-      ],
+      "extensions": ["llvm-vs-code-extensions.vscode-clangd", "ms-vsliveshare.vsliveshare", "twxs.cmake"],
       "settings": {
         "clangd.path": "clangd"
       }
