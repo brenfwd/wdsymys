@@ -1,4 +1,5 @@
 #include <llvm/Analysis/LazyValueInfo.h>
+#include <llvm/Analysis/DependenceAnalysis.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/LoopPass.h>
 #include <llvm/IR/DataLayout.h>
@@ -56,17 +57,10 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     llvm::LazyValueInfo& LVI = FAM.getResult<llvm::LazyValueAnalysis>(F);
 
     std::vector<Instruction*> InstructionsToRewrite;
+    std::vector<Instruction*> InstructionsToErase;
 
     for (auto& BB : F) {
       for (auto& I : BB) {
-        if (I.getOpcode() == llvm::Instruction::ZExt) {
-          continue;
-        }
-
-        if (I.getOpcode() == llvm::Instruction::SExt) {
-          continue;
-        }
-
         if (I.getOpcode() == llvm::Instruction::Trunc) {
           continue;
         }
@@ -83,6 +77,23 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
           // errs() << "\n";
 
           if (BestType != I.getType()) {
+            if (I.getOpcode() == llvm::Instruction::ZExt || I.getOpcode() == llvm::Instruction::SExt) {
+              if (BestType != I.getOperand(0)->getType()) {
+                continue;
+              }
+
+              for (llvm::Use& Use : I.uses()) {
+                if (Instruction* UserInst = dyn_cast<Instruction>(Use.getUser())) {
+                  InstructionsToRewrite.push_back(UserInst);
+                }
+              }
+              
+              I.replaceAllUsesWith(I.getOperand(0));
+              InstructionsToErase.push_back(&I);
+
+              continue;
+            }
+
             I.mutateType(BestType);
             InstructionsToRewrite.push_back(&I);
 
@@ -97,6 +108,10 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     }
 
     // errs() << F << "\n\n";
+
+    for (Instruction* I : InstructionsToErase) {
+      I->eraseFromParent();
+    }
 
     for (Instruction* UserInst : InstructionsToRewrite) {
       unsigned int numOps = UserInst->getNumOperands();
@@ -137,6 +152,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               Operand.set(NewConstant);
             } else if (Operand.get()->getType() != LargestOperandType) {
               Builder.SetInsertPoint(UserInst);
+              errs() << "sext " << *Operand.get()->getType() << " to " << *LargestOperandType << "\n";
               llvm::Value* Ext =
                   Builder.CreateSExt(Operand.get(), LargestOperandType, "_lvi_sext");
               Operand.set(Ext);
@@ -168,12 +184,31 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
         assert(FReturnType);
         if (FReturnType != UserInst->getOperand(0)->getType()) {
           Builder.SetInsertPoint(UserInst);
+            errs() << "sext " << *UserInst->getOperand(0)->getType() << " to " << *FReturnType << "\n";
           llvm::Value* Ext =
               Builder.CreateSExt(UserInst->getOperand(0), FReturnType, "_lvi_sext");
           UserInst->setOperand(0, Ext);
         }
       }
     }
+
+    InstructionsToErase.clear();    
+    for (auto& BB : F) {
+      for (auto& I : BB) {
+        if (I.getOpcode() == llvm::Instruction::SExt) {
+          if (I.getOperand(0)->getType() == I.getType()) {
+            I.replaceAllUsesWith(I.getOperand(0));
+            InstructionsToErase.push_back(&I);
+          }
+        }
+      }
+    }
+
+    for (Instruction* I : InstructionsToErase) {
+      I->eraseFromParent();
+    }
+
+    errs() << F << "\n\n";
 
     return llvm::PreservedAnalyses::none();
   }
@@ -217,6 +252,7 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
     llvm::LLVMContext& Ctx = F.getContext();
     llvm::IRBuilder<> Builder(Ctx);
     llvm::DenseMap<llvm::Value*, PackedVal> PackMap;
+    llvm::DependenceInfo& Dependencies = FAM.getResult<llvm::DependenceAnalysis>(F);
 
     for (auto& BB : F) {
       WDSYMYSPacking* ToPack = new WDSYMYSPacking();
@@ -229,10 +265,34 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
         if (I.getName().starts_with("_lvi_")) {
           continue;
         }
+        
+        // if (I.getOpcode() == llvm::Instruction::ZExt) {
+        //   continue;
+        // }
+
+        // if (I.getOpcode() == llvm::Instruction::SExt) {
+        //   continue;
+        // }
+
+        // if (I.getOpcode() == llvm::Instruction::Trunc) {
+        //   continue;
+        // }
 
         Builder.SetInsertPoint(&I);
         if (IntegerType* type = dyn_cast<IntegerType>(I.getType())) {
           if (!llvm::isa<llvm::PHINode>(&I)) {
+            if (I.hasOneUse()) {
+              if (auto* UserInstruction = dyn_cast<Instruction>(*I.user_begin())) {
+                errs() << "yes\n";
+                if (std::unique_ptr<llvm::Dependence> Dep = Dependencies.depends(UserInstruction, &I, false)) {
+                  errs() << cast<llvm::SCEVConstant>(Dep->getDistance(0))->getAPInt().getZExtValue() << "\n";
+                  // if (Dep->getDistance(0) < 4) {
+                  //   continue;
+                  // }
+                }
+              }
+            }
+
             size_t sz = type->getBitWidth();
 
             if (ToPack->bits_remaining < sz) {

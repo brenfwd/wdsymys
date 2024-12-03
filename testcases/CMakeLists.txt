@@ -2,6 +2,9 @@ set(TESTCASES "")
 file(GLOB TEST_SRCS CONFIGURE_DEPENDS "*.c")
 message(STATUS "TEST_SRCS: ${TEST_SRCS}")
 
+# set(TESTCASE_CC_FLAGS -O0 -Xclang -disable-O0-optnone)
+set(TESTCASE_CC_FLAGS -O1)
+
 foreach(TEST_SRC ${TEST_SRCS})
     cmake_path(GET TEST_SRC STEM TEST_NAME)
     message(STATUS "TEST: ${TEST_NAME}")
@@ -42,12 +45,12 @@ foreach(TEST_SRC ${TEST_SRCS})
     )
     ADD_CUSTOM_TARGET(
         ${TEST_NAME}.baseline
-        COMMAND clang ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.bc -O0 -Xclang -disable-O0-optnone -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.baseline -fstack-usage -Xclang -stack-usage-file -Xclang ${TEST_NAME}.baseline.su && (objdump -d ${TEST_NAME}.baseline > ${TEST_NAME}.baseline.s)
+        COMMAND clang ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.bc ${TESTCASE_CC_FLAGS} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.baseline -fstack-usage -Xclang -stack-usage-file -Xclang ${TEST_NAME}.baseline.su && (objdump -d ${TEST_NAME}.baseline > ${TEST_NAME}.baseline.s)
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.bc 
     )
     ADD_CUSTOM_TARGET(
         ${TEST_NAME}
-        COMMAND clang ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.bc -O0 -Xclang -disable-O0-optnone -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME} -fstack-usage && (objdump -d ${TEST_NAME} > ${TEST_NAME}.s)
+        COMMAND clang ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.bc ${TESTCASE_CC_FLAGS} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME} -fstack-usage && (objdump -d ${TEST_NAME} > ${TEST_NAME}.s)
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.baseline ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.bc ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.ll ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.lvi.ll ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.packed.ll
     )
 
