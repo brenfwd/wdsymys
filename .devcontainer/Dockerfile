@@ -1,38 +1,25 @@
 FROM ubuntu:24.04
 
 
-# Install packages needed to download LLVM
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
   && apt-get -y install --no-install-recommends \
-  curl wget ca-certificates \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+  software-properties-common wget
 
-# Download LLVM 18.1.8 source
-RUN mkdir -p /tmp/llvm
-RUN cd /tmp/llvm && \
-  curl -L --progress-bar https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-18.1.8.tar.gz > llvmorg-18.1.8.tar.gz
-RUN cd /tmp/llvm && \
-  tar -xvf llvmorg-18.1.8.tar.gz && \
-  mv llvm-project-llvmorg-18.1.8 llvm && \
-  rm -v llvmorg-18.1.8.tar.gz
+RUN wget -O /tmp/llvm.sh https://apt.llvm.org/llvm.sh && \
+  chmod +x /tmp/llvm.sh && \
+  /tmp/llvm.sh 18 all
 
-# Install build packages
-RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
-  && apt-get -y install --no-install-recommends \
-  git sudo cmake python3 zlib1g make ninja-build build-essential lld \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Add symlinks
+RUN bash -c 'for clang_bin in /usr/bin/clang*-18; do [[ -e $clang_bin ]] && ln -sf "$clang_bin" "/usr/local/bin/$(basename "$clang_bin" | sed 's/-18$//')"; done'
+RUN bash -c 'for ll_bin in /usr/bin/ll*-18; do [[ -e $ll_bin ]] && ln -sf "$ll_bin" "/usr/local/bin/$(basename "$ll_bin" | sed 's/-18$//')"; done'
 
-# Build LLVM from source
-RUN mkdir /tmp/llvm/llvm/build
-RUN cd /tmp/llvm/llvm/build && \
-  cmake -DLLVM_ENABLE_PROJECTS="clang;compiler-rt;clang-tools-extra" -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_LINKER=lld -S llvm -G "Ninja" ../llvm
-RUN cd /tmp/llvm/llvm/build && \
-  ninja install -j$(nproc)
+RUN ln -s /usr/include/llvm-18/llvm /usr/include/llvm
+RUN ln -s /usr/include/llvm-c-18/llvm-c /usr/include/llvm-c
 
 # Install additional packages
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive && \
   apt-get -y install --no-install-recommends \
-  unzip vim openssh-client eza bat && \
+  unzip vim openssh-client eza bat git cmake ninja-build make build-essential && \
   apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Overwrite .bashrc
