@@ -21,5 +21,5 @@ int main() {
     uint8_t data[5] = {1, 2, 3, 4, 5};
     uint16_t length = 5;
     uint8_t result = process_sensor_data(data, length);
-    return result;
+    return result; // should be 10
 }

@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-void register_pressure_test() {
+int register_pressure_test() {
     // Declare over 100 int32_t variables
     int32_t a1 = 1, a2 = 2, a3 = 3, a4 = 4, a5 = 5;
     int32_t a6 = 6, a7 = 7, a8 = 8, a9 = 9, a10 = 10;
@@ -26,49 +26,75 @@ void register_pressure_test() {
 
     int32_t result = 0;
 
-    // Nested loops to increase control flow complexity
+    // Complex nested loops with if/else-if/else blocks
     for (int i = 0; i < 10; i++) {
         for (int j = 0; j < 10; j++) {
-            if (i % 2 == 0) {
-                a1 += a2 + a3;
-                a4 += a5 - a6;
+            if (i % 3 == 0) {
+                a1 += a2 + a3 - a4;
+                a5 *= (a6 & a7);
+                result ^= a8 + a9;
+            } else if (i % 3 == 1) {
+                a10 ^= a11 | a12;
+                a13 += a14 % (a15 + 1);
+                a16 -= a17 * a18;
             } else {
-                a7 += a8 * a9;
-                a10 -= a11 + a12;
+                a19 &= a20 ^ a21;
+                a22 -= a23 + a24;
+                result |= (a25 << 1) + (a26 >> 1);
             }
 
-            if (j % 3 == 0) {
-                a13 += a14 * a15;
-                a16 -= a17 / (a18 + 1); // Avoid division by zero
-            } else if (j % 3 == 1) {
-                a19 += a20 % (a21 + 1); // Modulus operator
-                a22 *= a23 - a24;
+            if (j % 2 == 0) {
+                a27 += (a28 * a29) ^ a30;
+                a31 &= (a32 - a33);
+                result += a34 + a35;
+            } else if (j % 5 == 0) {
+                a36 ^= (a37 + a38) | a39;
+                a40 += (a41 - a42) % (a43 + 1);
+                result -= a44 + a45;
             } else {
-                a25 ^= a26 | a27;
-                a28 &= a29 + a30;
+                a46 |= a47 & a48;
+                a49 -= a50 + a51;
+                result ^= a52 | a53;
             }
 
-            // More operations
-            result += a1 + a2 + a3 + a4 + a5;
+            for (int k = 0; k < 5; k++) {
+                if (k % 2 == 0) {
+                    a54 += (a55 * a56) ^ (a57 - a58);
+                    a59 &= (a60 | a61);
+                    result += a62 ^ a63;
+                } else {
+                    a64 ^= (a65 - a66) + a67;
+                    a68 -= (a69 * a70) % (a71 + 1);
+                    result |= a72 & a73;
+                }
+            }
         }
     }
 
-    // Some additional conditionals and loops
-    for (int k = 0; k < 5; k++) {
-        if (k < 3) {
-            a31 += a32 * a33;
-            a34 -= a35 / (a36 + 1);
+    // Additional loop with conditions
+    for (int i = 0; i < 20; i++) {
+        if (i < 10) {
+            a74 += a75 - a76;
+            a77 ^= (a78 & a79);
+            result ^= a80 + a81;
         } else {
-            a37 ^= a38 & a39;
-            a40 |= a41 + a42;
+            a82 -= (a83 * a84) + a85;
+            a86 |= (a87 ^ a88);
+            result += a89 & a90;
         }
     }
 
-    // Print result to ensure variables aren't optimized out
-    printf("Result: %d\n", result);
+    // Final computation using all variables
+    result ^= a91 + a92 ^ a93;
+    result ^= a94 + a95 * a96;
+    result ^= a97 + a98 | a99;
+    result ^= a100;
+
+    return result;
 }
 
 int main() {
-    register_pressure_test();
-    return 0;
+    int final_result = register_pressure_test();
+    printf("Final Result: %d\n", final_result); // 14684
+    return final_result; // 92
 }
