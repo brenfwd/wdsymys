@@ -24,11 +24,11 @@ IntegerType* getBestIntegerType(size_t BitWidth, llvm::LLVMContext& Ctx) {
 
 // std::pairs do not bring me joy
 struct PackedVal {
-  Value* packedVal;
+  Instruction* packedVal;
   size_t startBit;
   IntegerType* type;
 
-  PackedVal(Value* pv, size_t s, IntegerType* t)
+  PackedVal(Instruction* pv, size_t s, IntegerType* t)
       : packedVal(pv), startBit(s), type(t) {}
 
   PackedVal() : packedVal(nullptr), startBit(0), type(nullptr) {}
@@ -56,8 +56,6 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     llvm::LazyValueInfo& LVI = FAM.getResult<llvm::LazyValueAnalysis>(F);
 
     std::vector<Instruction*> InstructionsToRewrite;
-
-    errs() << F << "\n\n";
 
     for (auto& BB : F) {
       for (auto& I : BB) {
@@ -140,7 +138,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
             } else if (Operand.get()->getType() != LargestOperandType) {
               Builder.SetInsertPoint(UserInst);
               llvm::Value* Ext =
-                  Builder.CreateSExt(Operand.get(), LargestOperandType, "sext");
+                  Builder.CreateSExt(Operand.get(), LargestOperandType, "_lvi_sext");
               Operand.set(Ext);
             }
           }
@@ -150,7 +148,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               UserInst->getOpcode() != llvm::Instruction::ICmp) {
             Builder.SetInsertPoint(UserInst->getNextNode());
             llvm::Value* Trunc =
-                Builder.CreateTrunc(UserInst, UserInstType, "trunc");
+                Builder.CreateTrunc(UserInst, UserInstType, "_lvi_trunc");
             UserInst->mutateType(LargestOperandType);
             for (auto& use : UserInst->uses()) {
               if (use != Trunc) {
@@ -171,7 +169,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
         if (FReturnType != UserInst->getOperand(0)->getType()) {
           Builder.SetInsertPoint(UserInst);
           llvm::Value* Ext =
-              Builder.CreateSExt(UserInst->getOperand(0), FReturnType, "sext");
+              Builder.CreateSExt(UserInst->getOperand(0), FReturnType, "_lvi_sext");
           UserInst->setOperand(0, Ext);
         }
       }
@@ -183,12 +181,14 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
 struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
  private:
-  llvm::Value* doPack(const llvm::SmallVector<PackedVal, 8>& ToPack,
+  llvm::Instruction* doPack(const llvm::SmallVector<PackedVal, 8>& ToPack,
                       llvm::IRBuilder<>& Builder, llvm::LLVMContext& Ctx) {
     llvm::Type* I64 = llvm::Type::getInt64Ty(Ctx);
-    llvm::Value* PackedValue = llvm::ConstantInt::get(I64, 0);
+    Builder.SetInsertPoint(
+          static_cast<llvm::Instruction*>(ToPack[0].packedVal)->getNextNode());
+    llvm::Instruction* PackedValue = dyn_cast<Instruction>(Builder.CreateZExt(ToPack[0].packedVal, I64, "ext"));
 
-    for (size_t i = 0; i < ToPack.size(); i++) {
+    for (size_t i = 1; i < ToPack.size(); i++) {
       unsigned sz = ToPack[i].type->getBitWidth();
 
       Builder.SetInsertPoint(
@@ -196,7 +196,7 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
       llvm::Value* Ext = Builder.CreateZExt(ToPack[i].packedVal, I64, "ext");
       llvm::Value* Shifted = Builder.CreateShl(
           Ext, llvm::ConstantInt::get(I64, ToPack[i].startBit), "shifted");
-      PackedValue = Builder.CreateOr(PackedValue, Shifted, "packed");
+      PackedValue = dyn_cast<Instruction>(Builder.CreateOr(PackedValue, Shifted, "packed"));
     }
     return PackedValue;
   }
@@ -217,8 +217,6 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
     llvm::LLVMContext& Ctx = F.getContext();
     llvm::IRBuilder<> Builder(Ctx);
     llvm::DenseMap<llvm::Value*, PackedVal> PackMap;
-    errs() << "skibidi called pack\n";
-    llvm::errs() << "\n\n" << F;
 
     for (auto& BB : F) {
       WDSYMYSPacking* ToPack = new WDSYMYSPacking();
@@ -227,16 +225,18 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
       // llvm::errs() << BB << "\n\n";
 
       // Iterate through each instruction in the basic block
-      errs() << "skibidi 1\n";
       for (auto& I : BB) {
+        if (I.getName().starts_with("_lvi_")) {
+          continue;
+        }
+
         Builder.SetInsertPoint(&I);
-        // llvm::errs() << "Instruction: " << I << "\n";
         if (IntegerType* type = dyn_cast<IntegerType>(I.getType())) {
           if (!llvm::isa<llvm::PHINode>(&I)) {
             size_t sz = type->getBitWidth();
 
             if (ToPack->bits_remaining < sz) {
-              llvm::Value* Packed = doPack(ToPack->to_pack, Builder, Ctx);
+              llvm::Instruction* Packed = doPack(ToPack->to_pack, Builder, Ctx);
 
               size_t currPos = 0;
               for (size_t i = 0; i < ToPack->to_pack.size(); i++) {
@@ -256,11 +256,9 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
           }
         }
       }
-      
-      errs() << "skibidi 2\n";
-
+    
       if (ToPack->to_pack.size() > 1) {
-        llvm::Value* Packed = doPack(ToPack->to_pack, Builder, Ctx);
+        llvm::Instruction* Packed = doPack(ToPack->to_pack, Builder, Ctx);
 
         size_t currPos = 0;
         for (size_t i = 0; i < ToPack->to_pack.size(); i++) {
@@ -268,8 +266,6 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
               static_cast<IntegerType*>(ToPack->to_pack[i].type);
           PackMap.try_emplace(ToPack->to_pack[i].packedVal, Packed, currPos,
                               type);
-          PackMap[ToPack->to_pack[i].packedVal] =
-              PackedVal(Packed, currPos, type);
 
           size_t sz = type->getBitWidth();
           currPos += sz;
@@ -279,29 +275,31 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
     }
 
     for (auto& [Orig, Pair] : PackMap) {
-      llvm::Value* Packed = Pair.packedVal;
+      llvm::Instruction* Packed = Pair.packedVal;
       size_t Index = Pair.startBit;
       IntegerType* type = Pair.type;
 
       for (auto& use : Orig->uses()) {
         // user must come AFTER Packed!
-        auto userInstr = dyn_cast<llvm::Instruction>(use.getUser());
-        if (!userInstr)
-          continue;
 
-        if (auto* PackedInstr = dyn_cast<llvm::Instruction>(Packed)) {
-          if (PackedInstr->getParent() == userInstr->getParent() &&
-              PackedInstr->comesBefore(userInstr)) {
-            Builder.SetInsertPoint(userInstr);
+        if (auto* UserInstr = dyn_cast<llvm::Instruction>(use.getUser())) {
+          if (Packed->getParent() == UserInstr->getParent() &&
+              Packed->comesBefore(UserInstr)) {
+            Builder.SetInsertPoint(UserInstr);
             llvm::Value* Unpacked = doUnpack(Packed, Index, type, Builder, Ctx);
             use.set(Unpacked);
           }
         }
+
+        if (auto* UserPHINode = dyn_cast<llvm::PHINode>(use.getUser())) {
+          llvm::BasicBlock* BBPredecessor = UserPHINode->getIncomingBlock(use);
+          Builder.SetInsertPoint(BBPredecessor->getTerminator());
+          llvm::Value* Unpacked = doUnpack(Packed, Index, type, Builder, Ctx);
+          UserPHINode->setIncomingValueForBlock(BBPredecessor, Unpacked);
+        }
       }
     }
 
-    errs() << "skibidi done\n";
-    llvm::errs() << "\n\n" << F;
     return llvm::PreservedAnalyses::none();
   }
 };
