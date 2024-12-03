@@ -2,4 +2,21 @@
 
 set -euxo pipefail
 
-cmake -B build -G Ninja && cmake --build build --target testcases/$1
+
+# If LLVM_PATH is not set, while it does not exist, try /usr/lib/llvm, /opt/homebrew/opt/llvm, and /opt/llvm.
+# If all are exhausted, exit with an error message.
+
+if [ -z "${LLVM_PATH:-}" ]; then
+    if [ -d /usr/lib/llvm ]; then
+        LLVM_PATH=/usr/lib/llvm
+    elif [ -d /opt/homebrew/opt/llvm ]; then
+        LLVM_PATH=/opt/homebrew/opt/llvm
+    elif [ -d /opt/llvm ]; then
+        LLVM_PATH=/opt/llvm
+    else
+        echo "LLVM_PATH must be set."
+        exit 1
+    fi
+fi
+
+cmake -B build -G Ninja -DLLVM_PATH=${LLVM_PATH} && cmake --build build --target testcases/$1
