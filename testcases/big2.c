@@ -7,18 +7,18 @@ int main() {
     srand(0);
 
     // Input variables to prevent constant folding
-    uint8_t input1 = rand() % 100 + 1;
-    uint8_t input2 = rand() % 50 + 1;
+    int8_t input1 = rand() % 100 + 1;
+    int8_t input2 = rand() % 50 + 1;
 
     // Declare 100 intermediate variables
-    uint8_t a, b, c, d, e, f, g, h, i, j;
-    uint8_t k, l, m, n, o, p, q, r, s, t;
-    uint8_t u, v, w, x, y, z, aa, bb, cc, dd;
-    uint8_t ee, ff, gg, hh, ii, jj, kk, ll, mm, nn;
-    uint8_t oo, pp, qq, rr, ss, tt, uu, vv, ww, xx;
-    uint8_t yy, zz, aaa, bbb, ccc, ddd, eee, fff, ggg, hhh;
-    uint8_t iii, jjj, kkk, lll, mmm, nnn, ooo, ppp, qqq, rrr;
-    uint8_t sss, ttt, uuu, vvv, www, xxx, yyy, zzz, aaaa, bbbb;
+    uint32_t a, b, c, d, e, f, g, h, i, j;
+    uint32_t k, l, m, n, o, p, q, r, s, t;
+    uint32_t u, v, w, x, y, z, aa, bb, cc, dd;
+    uint32_t ee, ff, gg, hh, ii, jj, kk, ll, mm, nn;
+    uint32_t oo, pp, qq, rr, ss, tt, uu, vv, ww, xx;
+    uint32_t yy, zz, aaa, bbb, ccc, ddd, eee, fff, ggg, hhh;
+    uint32_t iii, jjj, kkk, lll, mmm, nnn, ooo, ppp, qqq, rrr;
+    uint32_t sss, ttt, uuu, vvv, www, xxx, yyy, zzz, aaaa, bbbb;
 
     // Perform chained computations
     a = input1 + input2;

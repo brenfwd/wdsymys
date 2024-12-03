@@ -10,5 +10,7 @@ int main() {
   int a = return_5();
   int b = return_7();
 
+  int c = a + b;
+
   return a + b;
 }
