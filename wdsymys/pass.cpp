@@ -5,11 +5,31 @@
 #include <llvm/IR/DataLayout.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/PassManager.h>
+#include <llvm/IR/Verifier.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Passes/PassPlugin.h>
 #include <llvm/Transforms/Utils/Mem2Reg.h>
+#include <llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h>
 
 #include <vector>
+
+// #define DEBUG
+constexpr bool DEBUG = false;
+
+class Debug {
+  public:
+  template <typename T>
+    auto& operator<<(const T& t) const {
+      if constexpr (DEBUG) {
+        llvm::errs() << t;
+      }
+      return *this;
+    }
+};
+
+
+Debug debug;
+
 
 namespace {
 
@@ -74,12 +94,15 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     std::vector<Instruction*> InstructionsToErase;
 
     llvm::DenseMap<llvm::Value*, llvm::IntegerType*> OriginalValueType;
-    errs() << "====:(){:|:&}:==== " << F.getName() << " ORIGINAL IR ";
-    errs() << "====:(){:|:&}:====\n";
-    errs() << F << "\n\n";
-    errs() << "====:(){:|:&}:==== " << F.getName() << " REWRITE LOGS ";
-    errs() << "====:(){:|:&}:====\n";
+    
+    
+    debug << "====:(){:|:&}:==== " << F.getName() << " ORIGINAL IR ";
+    debug << "====:(){:|:&}:====\n";
+    debug << F << "\n\n";
+    debug << "====:(){:|:&}:==== " << F.getName() << " REWRITE LOGS ";
+    debug << "====:(){:|:&}:====\n";
 
+    llvm::DenseMap<llvm::Use*, llvm::Value*> OuterUsesToReplace;
     for (auto& BB : F) {
       for (auto& I : BB) {
         if (I.getOpcode() == llvm::Instruction::Trunc) {
@@ -91,7 +114,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
           size_t BitWidth = CR.getUpper().getActiveBits();
           IntegerType* BestType = getBestIntegerType(BitWidth, Ctx);
 
-          llvm::DenseMap<llvm::Use*, llvm::Value*> UsesToReplace;
+          llvm::DenseMap<llvm::Use*, llvm::Value*> OuterUsesToReplace;
 
           if (BestType != I.getType()) {
             if (I.getOpcode() == llvm::Instruction::ZExt ||
@@ -108,27 +131,48 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               }
 
               I.replaceAllUsesWith(I.getOperand(0));
+              OriginalValueType[I.getOperand(0)] = IntType;
               InstructionsToErase.push_back(&I);
 
+              continue;
+            }
+
+            if (I.getOpcode() == llvm::Instruction::Call) {
+              Builder.SetInsertPoint(I.getNextNode());
+              llvm::Value* Trunc = Builder.CreateTrunc(
+                  &I, BestType, "_lvi_trunc_d");
+              
+              for (auto& use : I.uses()) {
+                if (use.getUser() != Trunc) {
+                  OuterUsesToReplace[&use] = Trunc;
+                }
+              }
+
+              OriginalValueType[Trunc] = IntType;
               continue;
             }
 
             OriginalValueType[&I] = IntType;
             I.mutateType(BestType);
             InstructionsToRewrite.push_back(&I);
-            errs() << "rewriting " << I << " because we mutated its type\n";
+            debug << "rewriting " << I << " because we mutated its type\n";
 
             for (llvm::Use& Use : I.uses()) {
               if (Instruction* UserInst =
                       dyn_cast<Instruction>(Use.getUser())) {
                 InstructionsToRewrite.push_back(UserInst);
-                errs() << "rewriting " << *UserInst << " because it uses a value we mutated\n";
+                debug << "rewriting " << *UserInst
+                       << " because it uses a value we mutated\n";
               }
             }
           }
         }
       }
     }
+
+    for (auto& [Use, NewValue] : OuterUsesToReplace) {
+        Use->set(NewValue);
+      }
 
     // for (Instruction* I : InstructionsToErase) {
     //   I->eraseFromParent();
@@ -138,7 +182,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
       llvm::DenseMap<llvm::Use*, llvm::Value*> UsesToReplace;
       unsigned int numOps = UserInst->getNumOperands();
 
-      errs() << "rewriting " << *UserInst << " now\n";
+      debug << "rewriting " << *UserInst << " now\n";
 
       if (UserInst->getOpcode() == Instruction::Call) {
         for (llvm::Use& FuncArg : UserInst->operands()) {
@@ -147,20 +191,23 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
           }
 
           llvm::IntegerType* OriginalType = OriginalValueType[FuncArg.get()];
-          llvm::IntegerType* CurrentType = dyn_cast<IntegerType>(FuncArg.get()->getType());
+          llvm::IntegerType* CurrentType =
+              dyn_cast<IntegerType>(FuncArg.get()->getType());
           Builder.SetInsertPoint(UserInst);
           if (OriginalType->getBitWidth() > CurrentType->getBitWidth()) {
-            llvm::Value* Ext = Builder.CreateSExt(FuncArg.get(), OriginalType, "_lvi_sext_c");
+            llvm::Value* Ext =
+                Builder.CreateSExt(FuncArg.get(), OriginalType, "_lvi_sext_c");
             UsesToReplace[&FuncArg] = Ext;
           } else if (OriginalType->getBitWidth() < CurrentType->getBitWidth()) {
-            llvm::Value* Trunc = Builder.CreateTrunc(FuncArg.get(), OriginalType, "_lvi_trunc_a");
+            llvm::Value* Trunc = Builder.CreateTrunc(
+                FuncArg.get(), OriginalType, "_lvi_trunc_a");
             UsesToReplace[&FuncArg] = Trunc;
           }
         }
-      } else if (isa<llvm::BinaryOperator>(UserInst) 
-                || UserInst->getOpcode() == Instruction::ICmp
-                || UserInst->getOpcode() == Instruction::Select
-                || UserInst->getOpcode() == Instruction::PHI) {
+      } else if (isa<llvm::BinaryOperator>(UserInst) ||
+                 UserInst->getOpcode() == Instruction::ICmp ||
+                 UserInst->getOpcode() == Instruction::Select ||
+                 UserInst->getOpcode() == Instruction::PHI) {
         // Upcast smaller op IntType to bigger to prevent any flows
         if (IntegerType* UserInstType =
                 dyn_cast<IntegerType>(UserInst->getType())) {
@@ -173,12 +220,13 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
             if (!OperandType) {
               continue;
             }
-            errs() << *Operand << " is an " << *OperandType << "\n";
+            debug << *Operand << " is an " << *OperandType << "\n";
 
             if (OperandType->getBitWidth() >
                     LargestOperandType->getBitWidth() &&
                 !isa<llvm::Constant>(Operand)) {
-              errs() << "Changing largest type to " << *OperandType << ", was " << *LargestOperandType << "\n";
+              debug << "Changing largest type to " << *OperandType << ", was "
+                     << *LargestOperandType << "\n";
               LargestOperandType = OperandType;
             }
 
@@ -193,12 +241,13 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
           // Upcast operands to match
           for (llvm::Use& Operand : UserInst->operands()) {
-            if (!isa<llvm::IntegerType>(Operand.get()->getType())) {
+            if (!isa<IntegerType>(Operand.get()->getType())) {
               continue;
             }
 
             // first argument of select is always a bool
-            if (UserInst->getOpcode() == Instruction::Select && Operand.getOperandNo() == 0) {
+            if (UserInst->getOpcode() == Instruction::Select &&
+                Operand.getOperandNo() == 0) {
               continue;
             }
 
@@ -216,26 +265,43 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               }
 
               Builder.SetInsertPoint(InsertPoint);
-              errs() << "creating sext from " << *Operand.get() << ", " << *Operand.get()->getType() << " to type " << *LargestOperandType << "\n";
+              debug << "creating sext from " << *Operand.get() << ", "
+                     << *Operand.get()->getType() << " to type "
+                     << *LargestOperandType << "\n";
               llvm::Value* Ext = Builder.CreateSExt(
                   Operand.get(), LargestOperandType, "_lvi_sext_a");
               UsesToReplace[&Operand] = Ext;
             }
           }
 
+          if (UserInst->getOpcode() == Instruction::PHI) {
+            for (llvm::Use& Operand : UserInst->operands()) {
+              if (auto* PhiPrecursor =
+                      dyn_cast<Instruction>(Operand.getUser())) {
+                if (OriginalValueType.contains(PhiPrecursor)) {
+                  OriginalValueType[UserInst] = OriginalValueType[PhiPrecursor];
+                  break;
+                }
+              }
+            }
+          }
+
           // Truncate instruction result if possible
           if (UserInstType != LargestOperandType &&
-              UserInst->getOpcode() != llvm::Instruction::ICmp && 
-              UserInst->getOpcode() != llvm::Instruction::Select) {
+              UserInst->getOpcode() != Instruction::ICmp) {
             Builder.SetInsertPoint(findInsertionPointAfterPHIs(UserInst));
-
             UserInst->mutateType(LargestOperandType);
-            // errs() << "mutating type of " << *UserInst << " from " << *UserInst->getType() << " to " << *LargestOperandType << "\n";
-            
-            errs() << "creating trunc from " << *UserInst << ", " << *UserInst->getType() << " to type " << *UserInstType << "\n";
+            // debug << "mutating type of " << *UserInst << " from " << *UserInst->getType() << " to " << *LargestOperandType << "\n";
+
+            debug << "creating trunc from " << *UserInst << ", "
+                   << *UserInst->getType() << " to type " << *UserInstType
+                   << "\n";
             llvm::Value* Trunc =
                 Builder.CreateTrunc(UserInst, UserInstType, "_lvi_trunc_b");
-    
+            if (OriginalValueType.contains(UserInst)) {
+              OriginalValueType[Trunc] = OriginalValueType[UserInst];
+            }
+
             for (auto& use : UserInst->uses()) {
               if (use.getUser() != Trunc) {
                 UsesToReplace[&use] = Trunc;
@@ -259,14 +325,15 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
       }
     }
 
-    errs() << "====:(){ :|:& };:&==== " << F.getName() << " FINAL IR ";
-    errs() << "====:(){:|:&}:====\n";
-    errs() << F << "\n\n";
-    
+    debug << "====:(){ :|:& };:&==== " << F.getName() << " FINAL IR ";
+    debug << "====:(){:|:&}:====\n";
+    debug << F << "\n\n";
+
     InstructionsToErase.clear();
     for (auto& BB : F) {
       for (auto& I : BB) {
-        if (I.getOpcode() == llvm::Instruction::SExt || I.getOpcode() == llvm::Instruction::Trunc) {
+        if (I.getOpcode() == Instruction::SExt ||
+            I.getOpcode() == Instruction::Trunc) {
           if (I.getOperand(0)->getType() == I.getType()) {
             I.replaceAllUsesWith(I.getOperand(0));
             InstructionsToErase.push_back(&I);
@@ -289,11 +356,11 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
                             llvm::IRBuilder<>& Builder,
                             llvm::LLVMContext& Ctx) {
     llvm::Type* I64 = llvm::Type::getInt64Ty(Ctx);
-    
+
     auto insertPoint = ToPack[0].packedVal->getNextNode();
     assert(insertPoint);
     Builder.SetInsertPoint(insertPoint);
-    
+
     llvm::Instruction* PackedValue = dyn_cast<Instruction>(
         Builder.CreateZExt(ToPack[0].packedVal, I64, "ext"));
 
@@ -382,7 +449,8 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
               }
               ToPack->clear();
             }
-            ToPack->to_pack.emplace_back(&I, 64 - ToPack->bits_remaining, IntType);
+            ToPack->to_pack.emplace_back(&I, 64 - ToPack->bits_remaining,
+                                         IntType);
             ToPack->bits_remaining -= sz;
           }
         }
@@ -409,7 +477,6 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
       size_t Index = Pair.startBit;
       IntegerType* IntType = Pair.IntType;
 
-
       std::vector<llvm::Use*> UsesToReplace;
 
       for (auto& use : Orig->uses()) {
@@ -418,7 +485,8 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
         if (auto* UserPHINode = dyn_cast<llvm::PHINode>(use.getUser())) {
           llvm::BasicBlock* BBPredecessor = UserPHINode->getIncomingBlock(use);
           Builder.SetInsertPoint(BBPredecessor->getTerminator());
-          llvm::Value* Unpacked = doUnpack(Packed, Index, IntType, Builder, Ctx);
+          llvm::Value* Unpacked =
+              doUnpack(Packed, Index, IntType, Builder, Ctx);
           UserPHINode->setIncomingValueForBlock(BBPredecessor, Unpacked);
         } else if (auto* UserInstr =
                        dyn_cast<llvm::Instruction>(use.getUser())) {
@@ -437,7 +505,6 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
       }
     }
 
-
     return llvm::PreservedAnalyses::none();
   }
 };
@@ -453,19 +520,23 @@ llvmGetPassPluginInfo() {
                llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
               if (Name == "wdsymys-lvi") {
                 FPM.addPass(WDSYMYSLVIPass());
+                // FPM.addPass(llvm::VerifierPass());
                 return true;
               }
               if (Name == "wdsymys-packing") {
                 FPM.addPass(WDSYMYSPackingPass());
+                // FPM.addPass(llvm::VerifierPass());
                 return true;
               }
               return false;
             });
         PB.registerOptimizerLastEPCallback([&](llvm::ModulePassManager& MPM,
-                                               auto) {
+                                               auto) {  
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::PromotePass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
-          // MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
+          MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
+          MPM.addPass(createModuleToFunctionPassAdaptor(llvm::AggressiveInstCombinePass()));
+          // MPM.addPass(createModuleToFunctionPassAdaptor(llvm::VerifierPass()));
           return true;
         });
 
