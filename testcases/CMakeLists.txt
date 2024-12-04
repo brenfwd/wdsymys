@@ -15,7 +15,7 @@ foreach(TEST_SRC ${TEST_SRCS})
     )
     ADD_CUSTOM_TARGET(
         ${TEST_NAME}.m2r.bc
-        COMMAND opt -load-pass-plugin=${WDSYMYS_PLUGIN_PATH} -passes=mem2reg ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.bc
+        COMMAND opt -passes=mem2reg -disable-verify ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.m2r.bc
         DEPENDS ${TEST_NAME}.bc
     )
     ADD_CUSTOM_TARGET(

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -euo pipefail
+
 # Ensure a program is provided
 if [ -z "$1" ]; then
     echo "Usage: $0 <program>"

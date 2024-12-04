@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euxo pipefail
+set -euo pipefail
 
 
 # If LLVM_PATH is not set, while it does not exist, try /usr/lib/llvm, /opt/homebrew/opt/llvm, and /opt/llvm.
@@ -19,4 +19,4 @@ if [ -z "${LLVM_PATH:-}" ]; then
     fi
 fi
 
-cmake -B build -G Ninja -DLLVM_PATH=${LLVM_PATH} && cmake --build build --target testcases/$1
+cmake -B build -G Ninja -DCMAKE_VERBOSE_MAKEFILE=ON -DLLVM_PATH=${LLVM_PATH} && cmake --build build --target testcases/$1 -- -v
