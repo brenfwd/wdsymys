@@ -1,5 +1,5 @@
-#include <llvm/Analysis/LazyValueInfo.h>
 #include <llvm/Analysis/DependenceAnalysis.h>
+#include <llvm/Analysis/LazyValueInfo.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/LoopPass.h>
 #include <llvm/IR/DataLayout.h>
@@ -58,7 +58,6 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     llvm::LazyValueInfo& LVI = FAM.getResult<llvm::LazyValueAnalysis>(F);
 
     std::vector<Instruction*> InstructionsToRewrite;
-    std::vector<llvm::PHINode*> PHINodesToRewrite;
     std::vector<Instruction*> InstructionsToErase;
 
     for (auto& BB : F) {
@@ -79,20 +78,19 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
           // errs() << "\n";
 
           if (BestType != I.getType()) {
-            if (I.getOpcode() == llvm::Instruction::ZExt || I.getOpcode() == llvm::Instruction::SExt) {
+            if (I.getOpcode() == llvm::Instruction::ZExt ||
+                I.getOpcode() == llvm::Instruction::SExt) {
               if (BestType != I.getOperand(0)->getType()) {
                 continue;
               }
 
               for (llvm::Use& Use : I.uses()) {
-                if (auto* UserInst = dyn_cast<Instruction>(Use.getUser())) {
+                if (Instruction* UserInst =
+                        dyn_cast<Instruction>(Use.getUser())) {
                   InstructionsToRewrite.push_back(UserInst);
                 }
-                if (auto* UserPHI = dyn_cast<llvm::PHINode>(Use.getUser())) {
-                  PHINodesToRewrite.push_back(UserPHI);
-                }
               }
-              
+
               I.replaceAllUsesWith(I.getOperand(0));
               InstructionsToErase.push_back(&I);
 
@@ -100,14 +98,13 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
             }
 
             I.mutateType(BestType);
+            // errs() << I << "\n";
             InstructionsToRewrite.push_back(&I);
 
             for (llvm::Use& Use : I.uses()) {
-              if (auto* UserInst = dyn_cast<Instruction>(Use.getUser())) {
+              if (Instruction* UserInst =
+                      dyn_cast<Instruction>(Use.getUser())) {
                 InstructionsToRewrite.push_back(UserInst);
-              }
-              if (auto* UserPHI = dyn_cast<llvm::PHINode>(Use.getUser())) {
-                PHINodesToRewrite.push_back(UserPHI);
               }
             }
           }
@@ -123,14 +120,16 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
     for (Instruction* UserInst : InstructionsToRewrite) {
       unsigned int numOps = UserInst->getNumOperands();
-      if (numOps == 2) {
+      llvm::DenseMap<llvm::Use*, llvm::Value*> UsesToReplace;
+      if (numOps == 2 || UserInst->getOpcode() == Instruction::PHI) {
         // Upcast smaller op type to bigger to prevent any flows
         if (IntegerType* UserInstType =
                 dyn_cast<IntegerType>(UserInst->getType())) {
           // Find largest type among operands and instruction type
           IntegerType* LargestOperandType = UserInstType;
           for (Value* Operand : UserInst->operands()) {
-            IntegerType* OperandType = dyn_cast<IntegerType>(Operand->getType());
+            IntegerType* OperandType =
+                dyn_cast<IntegerType>(Operand->getType());
 
             if (!OperandType) {
               continue;
@@ -153,6 +152,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
           // errs() << "Largest operand type of" << *UserInst << ": "
           //        << *LargestOperandType << "\n";
           // Upcast constants to match
+
           for (llvm::Use& Operand : UserInst->operands()) {
             if (!isa<llvm::IntegerType>(Operand.get()->getType())) {
               continue;
@@ -166,13 +166,20 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               // errs() << "Changed constant to have type "
               //        << *NewConstant->getType() << ", should be "
               //        << *LargestOperandType << "\n";
-              Operand.set(NewConstant);
+              UsesToReplace[&Operand] = NewConstant;
             } else if (Operand.get()->getType() != LargestOperandType) {
-              Builder.SetInsertPoint(UserInst);
+              Instruction* InsertPoint = UserInst;
+
+              if (auto* UserPHI = dyn_cast<llvm::PHINode>(UserInst)) {
+                InsertPoint =
+                    UserPHI->getIncomingBlock(Operand)->getTerminator();
+              }
+
+              Builder.SetInsertPoint(InsertPoint);
               // errs() << "sext " << *Operand.get()->getType() << " to " << *LargestOperandType << "\n";
-              llvm::Value* Ext =
-                  Builder.CreateSExt(Operand.get(), LargestOperandType, "_lvi_sext");
-              Operand.set(Ext);
+              llvm::Value* Ext = Builder.CreateSExt(
+                  Operand.get(), LargestOperandType, "_lvi_sext");
+              UsesToReplace[&Operand] = Ext;
             }
           }
 
@@ -190,6 +197,11 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
             }
           }
         }
+
+        for (auto& [Use, NewConstant] : UsesToReplace) {
+          Use->set(NewConstant);
+        }
+
         // else {
         // yeah idk, this is fucked
         // we put something in that we shouldn't have
@@ -201,15 +213,15 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
         assert(FReturnType);
         if (FReturnType != UserInst->getOperand(0)->getType()) {
           Builder.SetInsertPoint(UserInst);
-            // errs() << "sext " << *UserInst->getOperand(0)->getType() << " to " << *FReturnType << "\n";
-          llvm::Value* Ext =
-              Builder.CreateSExt(UserInst->getOperand(0), FReturnType, "_lvi_sext");
+          // errs() << "sext " << *UserInst->getOperand(0)->getType() << " to " << *FReturnType << "\n";
+          llvm::Value* Ext = Builder.CreateSExt(UserInst->getOperand(0),
+                                                FReturnType, "_lvi_sext");
           UserInst->setOperand(0, Ext);
         }
       }
     }
 
-    InstructionsToErase.clear();    
+    InstructionsToErase.clear();
     for (auto& BB : F) {
       for (auto& I : BB) {
         if (I.getOpcode() == llvm::Instruction::SExt) {
@@ -234,21 +246,26 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
  private:
   llvm::Instruction* doPack(const llvm::SmallVector<PackedVal, 8>& ToPack,
-                      llvm::IRBuilder<>& Builder, llvm::LLVMContext& Ctx) {
+                            llvm::IRBuilder<>& Builder,
+                            llvm::LLVMContext& Ctx) {
     llvm::Type* I64 = llvm::Type::getInt64Ty(Ctx);
-    Builder.SetInsertPoint(
-          static_cast<llvm::Instruction*>(ToPack[0].packedVal)->getNextNode());
-    llvm::Instruction* PackedValue = dyn_cast<Instruction>(Builder.CreateZExt(ToPack[0].packedVal, I64, "ext"));
+    // if (auto next = dyn_cast<Instruction>(ToPack[0].packedVal)->getNextNode())
+    auto insertPoint = ToPack[0].packedVal->getNextNode();
+    assert(insertPoint);
+    Builder.SetInsertPoint(insertPoint);
+    llvm::Instruction* PackedValue = dyn_cast<Instruction>(
+        Builder.CreateZExt(ToPack[0].packedVal, I64, "ext"));
 
     for (size_t i = 1; i < ToPack.size(); i++) {
       unsigned sz = ToPack[i].type->getBitWidth();
 
       Builder.SetInsertPoint(
-          static_cast<llvm::Instruction*>(ToPack[i].packedVal)->getNextNode());
+          dyn_cast<Instruction>(ToPack[i].packedVal)->getNextNode());
       llvm::Value* Ext = Builder.CreateZExt(ToPack[i].packedVal, I64, "ext");
       llvm::Value* Shifted = Builder.CreateShl(
           Ext, llvm::ConstantInt::get(I64, ToPack[i].startBit), "shifted");
-      PackedValue = dyn_cast<Instruction>(Builder.CreateOr(PackedValue, Shifted, "packed"));
+      PackedValue = dyn_cast<Instruction>(
+          Builder.CreateOr(PackedValue, Shifted, "packed"));
     }
     return PackedValue;
   }
@@ -269,7 +286,8 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
     llvm::LLVMContext& Ctx = F.getContext();
     llvm::IRBuilder<> Builder(Ctx);
     llvm::DenseMap<llvm::Value*, PackedVal> PackMap;
-    llvm::DependenceInfo& Dependencies = FAM.getResult<llvm::DependenceAnalysis>(F);
+    llvm::DependenceInfo& Dependencies =
+        FAM.getResult<llvm::DependenceAnalysis>(F);
 
     for (auto& BB : F) {
       WDSYMYSPacking* ToPack = new WDSYMYSPacking();
@@ -279,10 +297,11 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
 
       // Iterate through each instruction in the basic block
       for (auto& I : BB) {
-        if (I.getName().starts_with("_lvi_") && I.getOpcode() == llvm::Instruction::SExt) {
+        if (I.getName().starts_with("_lvi_") &&
+            I.getOpcode() == llvm::Instruction::SExt) {
           continue;
         }
-        
+
         // if (I.getOpcode() == llvm::Instruction::ZExt) {
         //   continue;
         // }
@@ -299,25 +318,25 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
         if (IntegerType* type = dyn_cast<IntegerType>(I.getType())) {
           if (!llvm::isa<llvm::PHINode>(&I)) {
             if (I.hasOneUse()) {
-              if (auto* UserInstruction = dyn_cast<Instruction>(*I.user_begin())) {
+              if (auto* UserInstruction =
+                      dyn_cast<Instruction>(*I.user_begin())) {
                 int distance = 0;
                 bool foundFirst = false;
 
-                for (auto &It : BB) {
-                    if (&It == &I)
-                        foundFirst = true;
-                    else if (&It == UserInstruction) {
-                        distance = foundFirst ? distance : -1;
-                        break;
-                    }
+                for (auto& It : BB) {
+                  if (&It == &I)
+                    foundFirst = true;
+                  else if (&It == UserInstruction) {
+                    distance = foundFirst ? distance : -1;
+                    break;
+                  }
 
-                    if (foundFirst)
-                        distance++;
+                  if (foundFirst)
+                    distance++;
                 }
                 if (distance < 4) {
                   continue;
                 }
-
               }
             }
 
@@ -337,13 +356,12 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
               }
               ToPack->clear();
             }
-            ToPack->to_pack.emplace_back(&I, 64 - ToPack->bits_remaining,
-                                          type);
+            ToPack->to_pack.emplace_back(&I, 64 - ToPack->bits_remaining, type);
             ToPack->bits_remaining -= sz;
           }
         }
       }
-    
+
       if (ToPack->to_pack.size() > 1) {
         llvm::Instruction* Packed = doPack(ToPack->to_pack, Builder, Ctx);
 
@@ -372,34 +390,29 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
       for (auto& use : Orig->uses()) {
         // user must come AFTER Packed!
 
-        if (auto* UserInstr = dyn_cast<llvm::Instruction>(use.getUser())) {
-          if ((Packed->getParent() == UserInstr->getParent() &&
-               Packed->comesBefore(UserInstr)) || Packed->getParent() != UserInstr->getParent()) {
-            UsesToReplace.push_back(&use);
-          }
-        }
-
         if (auto* UserPHINode = dyn_cast<llvm::PHINode>(use.getUser())) {
           llvm::BasicBlock* BBPredecessor = UserPHINode->getIncomingBlock(use);
           Builder.SetInsertPoint(BBPredecessor->getTerminator());
           llvm::Value* Unpacked = doUnpack(Packed, Index, type, Builder, Ctx);
           UserPHINode->setIncomingValueForBlock(BBPredecessor, Unpacked);
-        }
-      }
-
-      for (auto* UseToReplace : UsesToReplace) {
-        if (auto* UserInstr = dyn_cast<llvm::Instruction>(UseToReplace->getUser())) {
+        } else if (auto* UserInstr =
+                       dyn_cast<llvm::Instruction>(use.getUser())) {
           if ((Packed->getParent() == UserInstr->getParent() &&
-               Packed->comesBefore(UserInstr)) || Packed->getParent() != UserInstr->getParent()) {
-            Builder.SetInsertPoint(UserInstr);
-            llvm::Value* Unpacked = doUnpack(Packed, Index, type, Builder, Ctx);
-            UseToReplace->set(Unpacked);
+               Packed->comesBefore(UserInstr)) ||
+              Packed->getParent() != UserInstr->getParent()) {
+            UsesToReplace.push_back(&use);
           }
         }
       }
+
+      for (auto* use : UsesToReplace) {
+        Builder.SetInsertPoint(cast<llvm::Instruction>(use->getUser()));
+        llvm::Value* Unpacked = doUnpack(Packed, Index, type, Builder, Ctx);
+        use->set(Unpacked);
+      }
     }
 
-    errs() << "wdsymys done\n";
+    // errs() << "wdsymys done\n";
 
     return llvm::PreservedAnalyses::none();
   }
@@ -409,27 +422,37 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
-  return {LLVM_PLUGIN_API_VERSION, "WDSYMYS", "v0.1",
-          [](llvm::PassBuilder& PB) {
-            PB.registerPipelineParsingCallback(
-                [](llvm::StringRef Name, llvm::FunctionPassManager& FPM,
-                   llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-                  if (Name == "wdsymys-lvi") {
-                    FPM.addPass(WDSYMYSLVIPass());
-                    return true;
-                  }
-                  if (Name == "wdsymys-packing") {
-                    FPM.addPass(WDSYMYSPackingPass());
-                    return true;
-                  }
-                  return false;
-                });
-            PB.registerPipelineEarlySimplificationEPCallback(
-              [&](llvm::ModulePassManager &MPM, auto) {
-                MPM.addPass(createModuleToFunctionPassAdaptor(llvm::PromotePass()));
-                // MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
-                MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
+  return {
+      LLVM_PLUGIN_API_VERSION, "WDSYMYS", "v0.1", [](llvm::PassBuilder& PB) {
+        PB.registerPipelineParsingCallback(
+            [](llvm::StringRef Name, llvm::FunctionPassManager& FPM,
+               llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+              if (Name == "wdsymys-lvi") {
+                FPM.addPass(WDSYMYSLVIPass());
                 return true;
-              });
-          }};
+              }
+              if (Name == "wdsymys-packing") {
+                FPM.addPass(WDSYMYSPackingPass());
+                return true;
+              }
+              return false;
+            });
+        PB.registerOptimizerLastEPCallback([&](llvm::ModulePassManager& MPM,
+                                               auto) {
+          MPM.addPass(createModuleToFunctionPassAdaptor(llvm::PromotePass()));
+          MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
+          // MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
+          return true;
+        });
+
+        // PB.registerPipelineEarlySimplificationEPCallback(
+        //     [&](llvm::ModulePassManager& MPM, auto) {
+        //       MPM.addPass(createModuleToFunctionPassAdaptor(
+        //           llvm::PromotePass()));
+        //       MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
+        //       MPM.addPass(createModuleToFunctionPassAdaptor(
+        //           WDSYMYSPackingPass()));
+        //       return true;
+        //     });
+      }};
 }

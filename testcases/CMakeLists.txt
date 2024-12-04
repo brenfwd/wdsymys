@@ -10,7 +10,7 @@ foreach(TEST_SRC ${TEST_SRCS})
     message(STATUS "TEST: ${TEST_NAME}")
     ADD_CUSTOM_COMMAND(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc
-        COMMAND clang -c -Xclang -disable-O0-optnone -emit-llvm ${TEST_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc
+        COMMAND clang -c -O3 -emit-llvm ${TEST_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc
         DEPENDS ${TEST_SRC}
     )
     ADD_CUSTOM_TARGET(
