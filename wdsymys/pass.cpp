@@ -106,6 +106,10 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                   InstructionsToRewrite.push_back(UserInst);
                 }
               }
+              //UsesToReplace[I.get()] = dyn_cast<IntegerType>(I.getType());
+              OriginalValueType[I.getOperand(0)] = IntType;
+
+              errs() << "I'm replacing " << I << " with " << *I.getOperand(0) << "\n";
 
               I.replaceAllUsesWith(I.getOperand(0));
               InstructionsToErase.push_back(&I);
@@ -123,6 +127,13 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                       dyn_cast<Instruction>(Use.getUser())) {
                 InstructionsToRewrite.push_back(UserInst);
                 errs() << "rewriting " << *UserInst << " because it uses a value we mutated\n";
+                errs() << "i belive it ";
+                if (llvm::isa<llvm::CallBase>(UserInst)) {
+                  errs() << "is ";
+                } else {
+                  errs() << "is not ";
+                }
+                errs() << "a function\n";
               }
             }
           }
@@ -140,19 +151,27 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
       errs() << "rewriting " << *UserInst << " now\n";
 
-      if (UserInst->getOpcode() == Instruction::Call) {
+      if (llvm::isa<llvm::CallBase>(UserInst)) {
+        errs() << "im a function: " << *UserInst << "\n";
         for (llvm::Use& FuncArg : UserInst->operands()) {
+          errs() << "other ptr: " << FuncArg << "\n";
+          errs() << "Im looking at the function arg " << FuncArg.get() << ": " << *FuncArg << "\n";
           if (OriginalValueType.count(FuncArg.get()) == 0) {
             continue;
           }
 
           llvm::IntegerType* OriginalType = OriginalValueType[FuncArg.get()];
           llvm::IntegerType* CurrentType = dyn_cast<IntegerType>(FuncArg.get()->getType());
+          
+          errs() << "The original type was: " << *OriginalType << "\n";
+          errs() << "We changed it to: " << *CurrentType << "\n";
           Builder.SetInsertPoint(UserInst);
           if (OriginalType->getBitWidth() > CurrentType->getBitWidth()) {
+            errs() << "I am correcting the change by sexting\n";
             llvm::Value* Ext = Builder.CreateSExt(FuncArg.get(), OriginalType, "_lvi_sext_c");
             UsesToReplace[&FuncArg] = Ext;
           } else if (OriginalType->getBitWidth() < CurrentType->getBitWidth()) {
+            errs() << "I am correcting the change by truncing\n";
             llvm::Value* Trunc = Builder.CreateTrunc(FuncArg.get(), OriginalType, "_lvi_trunc_a");
             UsesToReplace[&FuncArg] = Trunc;
           }
@@ -231,11 +250,10 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
             UserInst->mutateType(LargestOperandType);
             // errs() << "mutating type of " << *UserInst << " from " << *UserInst->getType() << " to " << *LargestOperandType << "\n";
-            
             errs() << "creating trunc from " << *UserInst << ", " << *UserInst->getType() << " to type " << *UserInstType << "\n";
             llvm::Value* Trunc =
                 Builder.CreateTrunc(UserInst, UserInstType, "_lvi_trunc_b");
-    
+            OriginalValueType[Trunc] = dyn_cast<IntegerType>(UserInst->getType());
             for (auto& use : UserInst->uses()) {
               if (use.getUser() != Trunc) {
                 UsesToReplace[&use] = Trunc;
@@ -255,6 +273,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
       }
 
       for (auto& [Use, NewValue] : UsesToReplace) {
+        errs() << "Setting " << **Use << " to " << *NewValue << "\n";
         Use->set(NewValue);
       }
     }
@@ -268,6 +287,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
       for (auto& I : BB) {
         if (I.getOpcode() == llvm::Instruction::SExt || I.getOpcode() == llvm::Instruction::Trunc) {
           if (I.getOperand(0)->getType() == I.getType()) {
+            errs() << "I'm fucking with a sext or a trunc: " << I << "\n";
             I.replaceAllUsesWith(I.getOperand(0));
             InstructionsToErase.push_back(&I);
           }
