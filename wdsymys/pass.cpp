@@ -129,6 +129,10 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                   InstructionsToRewrite.push_back(UserInst);
                 }
               }
+              //UsesToReplace[I.get()] = dyn_cast<IntegerType>(I.getType());
+              OriginalValueType[I.getOperand(0)] = IntType;
+
+              errs() << "I'm replacing " << I << " with " << *I.getOperand(0) << "\n";
 
               I.replaceAllUsesWith(I.getOperand(0));
               OriginalValueType[I.getOperand(0)] = IntType;
@@ -161,8 +165,14 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               if (Instruction* UserInst =
                       dyn_cast<Instruction>(Use.getUser())) {
                 InstructionsToRewrite.push_back(UserInst);
-                debug << "rewriting " << *UserInst
-                       << " because it uses a value we mutated\n";
+                errs() << "rewriting " << *UserInst << " because it uses a value we mutated\n";
+                errs() << "i belive it ";
+                if (llvm::isa<llvm::CallBase>(UserInst)) {
+                  errs() << "is ";
+                } else {
+                  errs() << "is not ";
+                }
+                errs() << "a function\n";
               }
             }
           }
@@ -184,23 +194,28 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
       debug << "rewriting " << *UserInst << " now\n";
 
-      if (UserInst->getOpcode() == Instruction::Call) {
+      if (llvm::isa<llvm::CallBase>(UserInst)) {
+        errs() << "im a function: " << *UserInst << "\n";
         for (llvm::Use& FuncArg : UserInst->operands()) {
+          errs() << "other ptr: " << FuncArg << "\n";
+          errs() << "Im looking at the function arg " << FuncArg.get() << ": " << *FuncArg << "\n";
           if (OriginalValueType.count(FuncArg.get()) == 0) {
             continue;
           }
 
           llvm::IntegerType* OriginalType = OriginalValueType[FuncArg.get()];
-          llvm::IntegerType* CurrentType =
-              dyn_cast<IntegerType>(FuncArg.get()->getType());
+          llvm::IntegerType* CurrentType = dyn_cast<IntegerType>(FuncArg.get()->getType());
+          
+          errs() << "The original type was: " << *OriginalType << "\n";
+          errs() << "We changed it to: " << *CurrentType << "\n";
           Builder.SetInsertPoint(UserInst);
           if (OriginalType->getBitWidth() > CurrentType->getBitWidth()) {
-            llvm::Value* Ext =
-                Builder.CreateSExt(FuncArg.get(), OriginalType, "_lvi_sext_c");
+            errs() << "I am correcting the change by sexting\n";
+            llvm::Value* Ext = Builder.CreateSExt(FuncArg.get(), OriginalType, "_lvi_sext_c");
             UsesToReplace[&FuncArg] = Ext;
           } else if (OriginalType->getBitWidth() < CurrentType->getBitWidth()) {
-            llvm::Value* Trunc = Builder.CreateTrunc(
-                FuncArg.get(), OriginalType, "_lvi_trunc_a");
+            errs() << "I am correcting the change by truncing\n";
+            llvm::Value* Trunc = Builder.CreateTrunc(FuncArg.get(), OriginalType, "_lvi_trunc_a");
             UsesToReplace[&FuncArg] = Trunc;
           }
         }
@@ -321,6 +336,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
       }
 
       for (auto& [Use, NewValue] : UsesToReplace) {
+        errs() << "Setting " << **Use << " to " << *NewValue << "\n";
         Use->set(NewValue);
       }
     }
@@ -335,6 +351,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
         if (I.getOpcode() == Instruction::SExt ||
             I.getOpcode() == Instruction::Trunc) {
           if (I.getOperand(0)->getType() == I.getType()) {
+            errs() << "I'm fucking with a sext or a trunc: " << I << "\n";
             I.replaceAllUsesWith(I.getOperand(0));
             InstructionsToErase.push_back(&I);
           }
