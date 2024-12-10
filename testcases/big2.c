@@ -112,7 +112,5 @@ int main() {
                  iii + jjj + kkk + lll + mmm + nnn + ooo + ppp + qqq + rrr +
                  sss + ttt + uuu + vvv + www + xxx + yyy + zzz + aaaa + bbbb;
 
-    printf("Result: %d\n", result);
-
     return result;
 }

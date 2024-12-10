@@ -36,7 +36,7 @@ profile() {
         echo "Total execution time: $EXECUTION_TIME seconds"
         echo "Cycles: $CYCLES"
     elif [[ "$OSTYPE" == "darwin"* ]]; then
-        time $1 || true
+        time ($1 2>&1 > /dev/null) || true
     else
         echo "L + unsupported OS"
     fi

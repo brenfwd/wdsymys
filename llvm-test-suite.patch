@@ -1,0 +1,186 @@
+diff --git a/cmake/caches/baseline.cmake b/cmake/caches/baseline.cmake
+new file mode 100644
+index 00000000..7bcdf489
+--- /dev/null
++++ b/cmake/caches/baseline.cmake
+@@ -0,0 +1,6 @@
++# Lowest optimization level and maximum debug information; A typical developer
++# configuration.
++set(CMAKE_BUILD_TYPE "Release" CACHE STRING "")
++set(CMAKE_C_FLAGS_RELEASE "-O3 -fstack-usage" CACHE STRING "")
++set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fstack-usage" CACHE STRING "")
++set(TEST_SUITE_SUBDIRS "SingleSource" CACHE STRING "")
+diff --git a/cmake/caches/wdsymys.cmake b/cmake/caches/wdsymys.cmake
+new file mode 100644
+index 00000000..0aa97677
+--- /dev/null
++++ b/cmake/caches/wdsymys.cmake
+@@ -0,0 +1,6 @@
++set(OPTFLAGS "-O3 -fpass-plugin=/Users/aidan/code/cse-583/wdsymys/build/wdsymys/WDSYMYS.dylib -fstack-usage")
++
++set(CMAKE_C_FLAGS_RELEASE "${OPTFLAGS}" CACHE STRING "")
++set(CMAKE_CXX_FLAGS_RELEASE "${OPTFLAGS}" CACHE STRING "")
++set(CMAKE_BUILD_TYPE "Release" CACHE STRING "")
++set(TEST_SUITE_SUBDIRS "SingleSource" CACHE STRING "")
+diff --git a/compare_runtimes.py b/compare_runtimes.py
+new file mode 100644
+index 00000000..bb99a4d5
+--- /dev/null
++++ b/compare_runtimes.py
+@@ -0,0 +1,23 @@
++import utils.compare
++import matplotlib.pyplot as plt
++import plot_theme
++import seaborn as sns
++
++baseline_df = utils.compare.read_lit_json("build-baseline/results.json").sort_values("hash")
++wdsymys_df = utils.compare.read_lit_json("build-wdsymys/results.json").sort_values("hash")
++
++print(baseline_df)
++
++delta_runtimes = wdsymys_df["exec_time"] - baseline_df["exec_time"]
++delta_code_size = wdsymys_df["size.__text"] - baseline_df["size.__text"]
++delta_code_size = delta_code_size[~delta_code_size.isna()]
++
++fig, (ax1, ax2) = plt.subplots(2, 1)
++
++sns.boxplot(delta_runtimes, orient="h", ax=ax1)
++ax1.set_xlabel("Change in execution time [s]")
++
++sns.boxplot(delta_code_size, orient="h", ax=ax2)
++ax2.set_xlabel("Change in code size [bytes]")
++
++plt.show()
+diff --git a/compare_stack_usage.py b/compare_stack_usage.py
+new file mode 100644
+index 00000000..7d6fc50f
+--- /dev/null
++++ b/compare_stack_usage.py
+@@ -0,0 +1,52 @@
++import pandas as pd
++import matplotlib.pyplot as plt
++import seaborn as sns
++import numpy as np
++import plot_theme
++
++PLOT_WIDTH = 1
++BIN_SIZE = 0.01
++
++wdsymys_df = pd.read_csv('build-wdsymys/stack_usage.txt', sep="\t", names=["symbol", "size", "class"], index_col="symbol")
++baseline_df = pd.read_csv('build-baseline/stack_usage.txt', sep="\t", names=["symbol", "size", "class"], index_col="symbol")
++
++print(baseline_df)
++print(wdsymys_df)
++
++baseline_df = baseline_df.loc[wdsymys_df.index]
++
++comparison_df = pd.DataFrame({
++    "symbol": wdsymys_df.index,
++    "baseline_size": baseline_df["size"],
++    "wdsymys_size": wdsymys_df["size"],
++})
++
++comparison_df["delta_size"] = comparison_df["wdsymys_size"] - comparison_df["baseline_size"]
++comparison_df["delta_percent"] = comparison_df["delta_size"] / comparison_df["baseline_size"]
++
++print(comparison_df.sort_values("delta_percent"))
++
++fig = plt.figure()
++ax1 = plt.subplot(211)
++ax2 = plt.subplot(212, sharex=ax1)
++counts, bins = np.histogram(comparison_df["delta_percent"], bins=np.arange(-PLOT_WIDTH, PLOT_WIDTH + BIN_SIZE, BIN_SIZE))
++ax1.bar(bins[:-1] + (BIN_SIZE / 2), counts / np.sum(counts), width=BIN_SIZE)
++ax1.axvline(0, c='black')
++ax1.set_ylabel("Frequency")
++# ax1.set_xlabel("Change in stack size [%]")
++# ax1.get_xaxis().set_visible(False)
++
++sns.boxplot(comparison_df["delta_percent"], ax=ax2, orient="h")
++ax2.set_xlabel("Change in stack size [%]")
++ax2.set_xlim(-PLOT_WIDTH, PLOT_WIDTH)
++
++fig.suptitle("Stack size change on LLVM Test Suite")
++
++print(f"made worse: {np.sum(comparison_df["delta_size"] > 0) / len(comparison_df):.4f}")
++print(f"made better: {np.sum(comparison_df["delta_size"] < 0) / len(comparison_df):.4f}")
++
++fig = plt.figure()
++
++plt.scatter(comparison_df["baseline_size"], comparison_df["delta_size"])
++
++plt.show()
+\ No newline at end of file
+diff --git a/plot_theme.py b/plot_theme.py
+new file mode 100644
+index 00000000..3c023b57
+--- /dev/null
++++ b/plot_theme.py
+@@ -0,0 +1,51 @@
++import matplotlib as mpl
++import matplotlib.pyplot as plt
++import matplotlib.font_manager as fm
++
++MICHIGAN_BLUE = '#00274C'
++MICHIGAN_MAIZE = '#FFCB05'
++
++TAPPAN_RED = '#9A3324'
++ROSS_ORANGE = '#D86018'
++WAVE_FIELD_GREEN = '#A5A508'
++A2_AMETHYST = '#702082'
++TAUBMAN_TEAL = '#00B2A9'
++LAW_QUAD_STONE = '#655A52'
++
++ANGELL_HALL_ASH = '#989C97'
++
++PUMA_BLACK = '#131516'
++SOLID_WHITE = '#FFFFFF'
++
++# make black #131516 instead
++mpl.rcParams['text.color'] = PUMA_BLACK
++mpl.rcParams['axes.labelcolor'] = PUMA_BLACK
++mpl.rcParams['xtick.color'] = PUMA_BLACK
++mpl.rcParams['ytick.color'] = PUMA_BLACK
++mpl.rcParams['axes.edgecolor'] = PUMA_BLACK
++mpl.rcParams['axes.facecolor'] = SOLID_WHITE
++
++# set text to Montserrat
++fe = fm.FontEntry(
++    fname='./LibertinusSerif-Regular.ttf',
++    name='Libertinus Serif')
++fm.fontManager.ttflist.insert(0, fe) # or append is fine
++mpl.rcParams['font.family'] = fe.name
++mpl.rcParams['mathtext.fontset'] = 'custom'
++mpl.rcParams['mathtext.it'] = fe.name + ':italic'
++mpl.rcParams['mathtext.bf'] = fe.name + ':italic:bold'
++
++# make lines thicker
++mpl.rcParams['lines.linewidth'] = 2
++
++# makes axes text larger
++mpl.rcParams['axes.labelsize'] = 12
++mpl.rcParams['axes.titlesize'] = 12
++
++# set color palette
++mpl.rcParams['axes.prop_cycle'] = mpl.cycler(color=[MICHIGAN_BLUE, MICHIGAN_MAIZE, TAPPAN_RED, A2_AMETHYST, ROSS_ORANGE])
++
++# turn grid on
++mpl.rcParams['axes.grid'] = True
++# put it behind
++mpl.rcParams['axes.axisbelow'] = True
+\ No newline at end of file
+diff --git a/test.sh b/test.sh
+new file mode 100755
+index 00000000..b1c7e680
+--- /dev/null
++++ b/test.sh
+@@ -0,0 +1,10 @@
++#!/bin/zsh
++
++BUILD_DIR=build-$1
++
++rm -rf ./$BUILD_DIR/*
++cmake -B $BUILD_DIR -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ -Ccmake/caches/$1.cmake -DTEST_SUITE_BENCHMARKING_ONLY=ON -DTEST_SUITE_RUN_BENCHMARKS=OFF .
++cmake --build $BUILD_DIR -j
++cd $BUILD_DIR
++grep -E -v "^\/" **/*.su | grep "static" > stack_usage.txt
++
