@@ -714,7 +714,7 @@ llvmGetPassPluginInfo() {
                                                auto) {  
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::PromotePass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
-          // MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
+          MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::AggressiveInstCombinePass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::VerifierPass()));
           return true;

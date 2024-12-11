@@ -1,3 +1,130 @@
+diff --git a/SingleSource/Regression/C/gcc-c-torture/execute/pr63302.c b/SingleSource/Regression/C/gcc-c-torture/execute/pr63302.c
+index 06a82af0..b939fc87 100644
+--- a/SingleSource/Regression/C/gcc-c-torture/execute/pr63302.c
++++ b/SingleSource/Regression/C/gcc-c-torture/execute/pr63302.c
+@@ -1,60 +1,62 @@
+-/* PR tree-optimization/63302 */
++// /* PR tree-optimization/63302 */
++//
++// #ifdef __SIZEOF_INT128__
++// #if __SIZEOF_INT128__ * __CHAR_BIT__ == 128
++// #define USE_INT128
++// #endif
++// #endif
++// #if __SIZEOF_LONG_LONG__ * __CHAR_BIT__ == 64
++// #define USE_LLONG
++// #endif
++//
++// #ifdef USE_INT128
++// __attribute__((noinline, noclone)) int
++// foo (__int128 x)
++// {
++//   __int128 v = x & (((__int128) -1 << 63) | 0x7ff);
++//
++//   return v == 0 || v == ((__int128) -1 << 63);
++// }
++// #endif
++//
++// #ifdef USE_LLONG
++// __attribute__((noinline, noclone)) int
++// bar (long long x)
++// {
++//   long long v = x & (((long long) -1 << 31) | 0x7ff);
++//
++//   return v == 0 || v == ((long long) -1 << 31);
++// }
++// #endif
++//
++// int
++// main ()
++// {
++// #ifdef USE_INT128
++//   if (foo (0) != 1
++//       || foo (1) != 0
++//       || foo (0x800) != 1
++//       || foo (0x801) != 0
++//       || foo ((__int128) 1 << 63) != 0
++//       || foo ((__int128) -1 << 63) != 1
++//       || foo (((__int128) -1 << 63) | 1) != 0
++//       || foo (((__int128) -1 << 63) | 0x800) != 1
++//       || foo (((__int128) -1 << 63) | 0x801) != 0)
++//     __builtin_abort ();
++// #endif
++// #ifdef USE_LLONG
++//   if (bar (0) != 1
++//       || bar (1) != 0
++//       || bar (0x800) != 1
++//       || bar (0x801) != 0
++//       || bar (1LL << 31) != 0
++//       || bar (-1LL << 31) != 1
++//       || bar ((-1LL << 31) | 1) != 0
++//       || bar ((-1LL << 31) | 0x800) != 1
++//       || bar ((-1LL << 31) | 0x801) != 0)
++//     __builtin_abort ();
++// #endif
++//   return 0;
++// }
+ 
+-#ifdef __SIZEOF_INT128__
+-#if __SIZEOF_INT128__ * __CHAR_BIT__ == 128
+-#define USE_INT128
+-#endif
+-#endif
+-#if __SIZEOF_LONG_LONG__ * __CHAR_BIT__ == 64
+-#define USE_LLONG
+-#endif
+-
+-#ifdef USE_INT128
+-__attribute__((noinline, noclone)) int
+-foo (__int128 x)
+-{
+-  __int128 v = x & (((__int128) -1 << 63) | 0x7ff);
+-
+-  return v == 0 || v == ((__int128) -1 << 63);
+-}
+-#endif
+-
+-#ifdef USE_LLONG
+-__attribute__((noinline, noclone)) int
+-bar (long long x)
+-{
+-  long long v = x & (((long long) -1 << 31) | 0x7ff);
+-
+-  return v == 0 || v == ((long long) -1 << 31);
+-}
+-#endif
+-
+-int
+-main ()
+-{
+-#ifdef USE_INT128
+-  if (foo (0) != 1
+-      || foo (1) != 0
+-      || foo (0x800) != 1
+-      || foo (0x801) != 0
+-      || foo ((__int128) 1 << 63) != 0
+-      || foo ((__int128) -1 << 63) != 1
+-      || foo (((__int128) -1 << 63) | 1) != 0
+-      || foo (((__int128) -1 << 63) | 0x800) != 1
+-      || foo (((__int128) -1 << 63) | 0x801) != 0)
+-    __builtin_abort ();
+-#endif
+-#ifdef USE_LLONG
+-  if (bar (0) != 1
+-      || bar (1) != 0
+-      || bar (0x800) != 1
+-      || bar (0x801) != 0
+-      || bar (1LL << 31) != 0
+-      || bar (-1LL << 31) != 1
+-      || bar ((-1LL << 31) | 1) != 0
+-      || bar ((-1LL << 31) | 0x800) != 1
+-      || bar ((-1LL << 31) | 0x801) != 0)
+-    __builtin_abort ();
+-#endif
+-  return 0;
+-}
++int main() {}
+\ No newline at end of file
 diff --git a/cmake/caches/baseline.cmake b/cmake/caches/baseline.cmake
 new file mode 100644
 index 00000000..7bcdf489
@@ -12,51 +139,66 @@ index 00000000..7bcdf489
 +set(TEST_SUITE_SUBDIRS "SingleSource" CACHE STRING "")
 diff --git a/cmake/caches/wdsymys.cmake b/cmake/caches/wdsymys.cmake
 new file mode 100644
-index 00000000..0aa97677
+index 00000000..49fbcac9
 --- /dev/null
 +++ b/cmake/caches/wdsymys.cmake
-@@ -0,0 +1,6 @@
-+set(OPTFLAGS "-O3 -fpass-plugin=/Users/aidan/code/cse-583/wdsymys/build/wdsymys/WDSYMYS.dylib -fstack-usage")
-+
+@@ -0,0 +1,5 @@
++set(OPTFLAGS "-O3 -fpass-plugin=/home/aidan/code/cse-583/wdsymys/build/wdsymys/WDSYMYS.so -fstack-usage")
 +set(CMAKE_C_FLAGS_RELEASE "${OPTFLAGS}" CACHE STRING "")
 +set(CMAKE_CXX_FLAGS_RELEASE "${OPTFLAGS}" CACHE STRING "")
 +set(CMAKE_BUILD_TYPE "Release" CACHE STRING "")
 +set(TEST_SUITE_SUBDIRS "SingleSource" CACHE STRING "")
 diff --git a/compare_runtimes.py b/compare_runtimes.py
 new file mode 100644
-index 00000000..bb99a4d5
+index 00000000..cdcc7304
 --- /dev/null
 +++ b/compare_runtimes.py
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,39 @@
 +import utils.compare
 +import matplotlib.pyplot as plt
 +import plot_theme
 +import seaborn as sns
++import pandas as pd
++import numpy as np
 +
 +baseline_df = utils.compare.read_lit_json("build-baseline/results.json").sort_values("hash")
 +wdsymys_df = utils.compare.read_lit_json("build-wdsymys/results.json").sort_values("hash")
 +
-+print(baseline_df)
++baseline_df = baseline_df.loc[wdsymys_df.index]
 +
-+delta_runtimes = wdsymys_df["exec_time"] - baseline_df["exec_time"]
-+delta_code_size = wdsymys_df["size.__text"] - baseline_df["size.__text"]
-+delta_code_size = delta_code_size[~delta_code_size.isna()]
++comparison_df = pd.DataFrame({
++    "symbol": wdsymys_df.index,
++    "baseline_time": baseline_df["exec_time"],
++    "wdsymys_time": wdsymys_df["exec_time"],
++    "baseline_text_size": baseline_df["size..text"],
++    "wdsymys_text_size": wdsymys_df["size..text"],
++})
++
++
++comparison_df["delta_time"] = comparison_df["wdsymys_time"] - comparison_df["baseline_time"]
++comparison_df["delta_text_size"] = comparison_df["wdsymys_text_size"] - comparison_df["baseline_text_size"]
++comparison_df["delta_time_percent"] = comparison_df["delta_time"] / comparison_df["baseline_time"] * 100
++comparison_df["delta_text_size_percent"] = comparison_df["delta_text_size"] / comparison_df["baseline_text_size"] * 100
++
++comparison_df["delta_time_percent"] = np.where(comparison_df["baseline_time"] == 0, 0, comparison_df["delta_time_percent"])
++
++print(comparison_df.sort_values("delta_time_percent"))
 +
 +fig, (ax1, ax2) = plt.subplots(2, 1)
 +
-+sns.boxplot(delta_runtimes, orient="h", ax=ax1)
-+ax1.set_xlabel("Change in execution time [s]")
++sns.boxplot(comparison_df["delta_time_percent"], orient="h", ax=ax1)
++ax1.set_xlabel("Change in execution time [%]")
 +
-+sns.boxplot(delta_code_size, orient="h", ax=ax2)
-+ax2.set_xlabel("Change in code size [bytes]")
++sns.boxplot(comparison_df["delta_text_size_percent"], orient="h", ax=ax2)
++ax2.set_xlabel("Change in code size [%]")
 +
 +plt.show()
 diff --git a/compare_stack_usage.py b/compare_stack_usage.py
 new file mode 100644
-index 00000000..7d6fc50f
+index 00000000..21622643
 --- /dev/null
 +++ b/compare_stack_usage.py
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,53 @@
 +import pandas as pd
 +import matplotlib.pyplot as plt
 +import seaborn as sns
@@ -81,7 +223,8 @@ index 00000000..7d6fc50f
 +})
 +
 +comparison_df["delta_size"] = comparison_df["wdsymys_size"] - comparison_df["baseline_size"]
-+comparison_df["delta_percent"] = comparison_df["delta_size"] / comparison_df["baseline_size"]
++comparison_df["delta_percent"] = comparison_df["delta_size"] / comparison_df["baseline_size"] * 100
++comparison_df = comparison_df[comparison_df["baseline_size"] != 0]
 +
 +print(comparison_df.sort_values("delta_percent"))
 +
@@ -170,17 +313,19 @@ index 00000000..3c023b57
 \ No newline at end of file
 diff --git a/test.sh b/test.sh
 new file mode 100755
-index 00000000..b1c7e680
+index 00000000..d633ae93
 --- /dev/null
 +++ b/test.sh
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,12 @@
 +#!/bin/zsh
 +
 +BUILD_DIR=build-$1
 +
++cmake --build ../wdsymys/build
 +rm -rf ./$BUILD_DIR/*
-+cmake -B $BUILD_DIR -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ -Ccmake/caches/$1.cmake -DTEST_SUITE_BENCHMARKING_ONLY=ON -DTEST_SUITE_RUN_BENCHMARKS=OFF .
-+cmake --build $BUILD_DIR -j
++cmake -B $BUILD_DIR -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -Ccmake/caches/$1.cmake -DTEST_SUITE_BENCHMARKING_ONLY=ON .
++#cmake -B $BUILD_DIR -DCMAKE_C_COMPILER=/opt/homebrew/opt/llvm/bin/clang -DCMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++ -Ccmake/caches/$1.cmake -DTEST_SUITE_BENCHMARKING_ONLY=ON -DTEST_SUITE_RUN_BENCHMARKS=OFF .
++cmake --build $BUILD_DIR -j 16
 +cd $BUILD_DIR
-+grep -E -v "^\/" **/*.su | grep "static" > stack_usage.txt
-+
++grep -E -v "^/" **/*.su | grep "static" > stack_usage.txt
++lit -v -j 10 -o results.json .
