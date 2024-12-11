@@ -2,7 +2,8 @@ set(TESTCASES "")
 file(GLOB TEST_SRCS CONFIGURE_DEPENDS "*.c" "*.cpp")
 message(STATUS "TEST_SRCS: ${TEST_SRCS}")
 
-set(TESTCASE_CC_FLAGS -O0 -Xclang -disable-O0-optnone)
+set(INITIAL_CC_FLAGS -O3 -Wno-implicit-int -Wno-int-conversion -Wno-implicit-function-declaration)
+set(TESTCASE_CC_FLAGS -O0 -Xclang -disable-O0-optnone )
 # set(TESTCASE_CC_FLAGS -O1)
 
 foreach(TEST_SRC ${TEST_SRCS})
@@ -10,7 +11,7 @@ foreach(TEST_SRC ${TEST_SRCS})
     message(STATUS "TEST: ${TEST_NAME}")
     ADD_CUSTOM_COMMAND(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc
-        COMMAND clang -c -O3 -emit-llvm ${TEST_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc
+        COMMAND clang -c ${INITIAL_CC_FLAGS} -emit-llvm ${TEST_SRC} -o ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.bc
         DEPENDS ${TEST_SRC}
     )
     ADD_CUSTOM_TARGET(

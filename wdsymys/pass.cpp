@@ -42,7 +42,8 @@ IntegerType* getBestIntegerType(size_t BitWidth, llvm::LLVMContext& Ctx) {
          : (BitWidth <= 8)  ? Type::getInt8Ty(Ctx)
          : (BitWidth <= 16) ? Type::getInt16Ty(Ctx)
          : (BitWidth <= 32) ? Type::getInt32Ty(Ctx)
-                            : Type::getInt64Ty(Ctx);
+         : (BitWidth <= 64) ? Type::getInt64Ty(Ctx)
+                            : Type::getInt128Ty(Ctx);
 }
 
 Instruction* findInsertionPointAfterPHIs(Instruction* Inst) {
@@ -109,7 +110,8 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
         }
 
         if (IntegerType* IntType = dyn_cast<IntegerType>(I.getType())) {
-          auto CR = LVI.getConstantRange(&I, &I, false);
+          debug << "Considering instruction " << I << "\n";
+          auto CR = LVI.getConstantRange(&I, &I, true);
           size_t BitWidth = CR.getUpper().getActiveBits();
           debug << I << " has range " << CR << " and bit width " << BitWidth << "\n";
           IntegerType* BestType = getBestIntegerType(BitWidth, Ctx);
@@ -193,12 +195,13 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
       if (auto* FunctionCall = dyn_cast<llvm::CallBase>(UserInst)) {
         debug << "im a function call: " << *FunctionCall << "\n";
-        llvm::Function* CalledFunction = FunctionCall->getCalledFunction();
-        for (size_t i = 0; i < CalledFunction->arg_size(); i++) {
+        debug << "call type or smth??: " << *FunctionCall->getFunctionType() << "\n";
+        llvm::FunctionType* CalledFunctionType = FunctionCall->getFunctionType();
+        for (size_t i = 0; i < CalledFunctionType->getNumParams(); i++) {
           llvm::Use& FuncArg = UserInst->getOperandUse(i);
           debug << "other ptr: " << FuncArg << "\n";
           debug << "Im looking at the function arg " << FuncArg.get() << ": " << *FuncArg << "\n";
-          auto* OriginalType = dyn_cast<IntegerType>(CalledFunction->getArg(FuncArg.getOperandNo())->getType());
+          auto* OriginalType = dyn_cast<IntegerType>(CalledFunctionType->getParamType(FuncArg.getOperandNo()));
           auto* CurrentType = dyn_cast<IntegerType>(FuncArg.get()->getType());
 
           // if they're not ints we didn't mess with them
@@ -208,8 +211,6 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
           }
 
           debug << "Arg number is: " << FuncArg.getOperandNo() << "\n";
-          debug << "Corresponding argument is: " << *CalledFunction->getArg(FuncArg.getOperandNo())
-                << "\n";
 
           debug << "The original type was: " << *OriginalType << "\n";
           debug << "We changed it to: " << *CurrentType << "\n";
@@ -233,7 +234,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                 dyn_cast<IntegerType>(UserInst->getType())) {
           // Find largest IntType among operands and instruction IntType
           IntegerType* LargestOperandType = UserInstType;
-          for (Value* Operand : UserInst->operands()) {
+          for (llvm::Use& Operand : UserInst->operands()) {
             IntegerType* OperandType =
                 dyn_cast<IntegerType>(Operand->getType());
 
@@ -242,18 +243,24 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
             }
             debug << *Operand << " is an " << *OperandType << "\n";
 
+            if (UserInst->getOpcode() == Instruction::Select && Operand.getOperandNo() == 0) {
+              continue;
+            }
+
             if (OperandType->getBitWidth() >
                     LargestOperandType->getBitWidth() &&
-                !isa<llvm::Constant>(Operand)) {
+                !isa<llvm::Constant>(&*Operand)) {
               debug << "Changing largest type to " << *OperandType << ", was "
                      << *LargestOperandType << "\n";
               LargestOperandType = OperandType;
             }
 
-            if (auto* ConstantOperand = dyn_cast<llvm::Constant>(Operand)) {
-              if (isa<llvm::UndefValue>(ConstantOperand) || isa<llvm::PoisonValue>(ConstantOperand)) {
+            if (auto* ConstantOperand = dyn_cast<llvm::Constant>(&*Operand)) {
+              if (isa<llvm::UndefValue>(ConstantOperand) || isa<llvm::PoisonValue>(ConstantOperand) || !isa<llvm::IntegerType>(ConstantOperand->getType()) || isa<llvm::ConstantExpr>(&*Operand)) {
                 continue;
               }
+
+              debug << "retyping constant " << *ConstantOperand << "\n";
 
               size_t ConstantBitWidth =
                   ConstantOperand->getUniqueInteger().getActiveBits();
@@ -275,7 +282,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               continue;
             }
 
-            if (auto* ConstantOperand = dyn_cast<llvm::Constant>(Operand)) {
+            if (auto* ConstantOperand = dyn_cast<llvm::Constant>(Operand); ConstantOperand && !isa<llvm::ConstantExpr>(Operand)) {
               if (isa<llvm::UndefValue>(ConstantOperand)) {
                 llvm::Constant* NewConstant = llvm::UndefValue::get(LargestOperandType);
                 UsesToReplace[&Operand] = NewConstant;
@@ -288,7 +295,6 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                                             LargestOperandType->getBitWidth()));
                 UsesToReplace[&Operand] = NewConstant;
               }
-
             } else if (Operand.get()->getType() != LargestOperandType) {
               Instruction* InsertPoint = UserInst;
 
@@ -297,13 +303,25 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                     UserPHI->getIncomingBlock(Operand)->getTerminator();
               }
 
+              auto* OperandType = dyn_cast<llvm::IntegerType>(Operand->getType());
+              assert(OperandType);
+
               Builder.SetInsertPoint(InsertPoint);
-              debug << "creating sext from " << *Operand.get() << ", "
-                     << *Operand.get()->getType() << " to type "
-                     << *LargestOperandType << "\n";
-              llvm::Value* Ext = Builder.CreateSExt(
-                  Operand.get(), LargestOperandType, "_lvi_sext_a");
-              UsesToReplace[&Operand] = Ext;
+              if (OperandType->getBitWidth() > LargestOperandType->getBitWidth()) {
+                debug << "creating trunc from " << *Operand.get() << ", "
+                       << *Operand.get()->getType() << " to type "
+                       << *LargestOperandType << "\n";
+                llvm::Value* Trunc =
+                    Builder.CreateTrunc(&*Operand, LargestOperandType, "_lvi_trunc_g");
+                UsesToReplace[&Operand] = Trunc;
+              } else {
+                debug << "creating sext from " << *Operand.get() << ", "
+                       << *Operand.get()->getType() << " to type "
+                       << *LargestOperandType << "\n";
+                llvm::Value* Ext = Builder.CreateSExt(Operand,
+                                                      LargestOperandType, "_lvi_sext_a");
+                UsesToReplace[&Operand] = Ext;
+              }
             }
           }
 
@@ -312,7 +330,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               UserInst->getOpcode() != Instruction::ICmp) {
             Builder.SetInsertPoint(findInsertionPointAfterPHIs(UserInst));
             UserInst->mutateType(LargestOperandType);
-            // debug << "mutating type of " << *UserInst << " from " << *UserInst->getType() << " to " << *LargestOperandType << "\n";
+            debug << "mutating type of " << *UserInst << " from " << *UserInst->getType() << " to " << *LargestOperandType << "\n";
 
             debug << "creating trunc from " << *UserInst << ", "
                    << *UserInst->getType() << " to type " << *UserInstType
@@ -423,6 +441,72 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                                                   VectorElementType, "_lvi_sext_e");
             UserInst->setOperand(i, Ext);
           }
+        }
+      } else if (UserInst->getOpcode() == Instruction::InsertValue) {
+        uint32_t InsertIndex = dyn_cast<llvm::InsertValueInst>(UserInst)->getIndices()[0];
+        Type* AggregateType = UserInst->getType();
+        auto* AggregateElementType = dyn_cast<IntegerType>(AggregateType->getContainedType(InsertIndex));
+
+        if (!AggregateElementType) {
+          continue;
+        }
+
+        debug << "InsertValue into index " << InsertIndex << " of " << *AggregateType
+              << ", which is an " << *AggregateElementType << "\n";
+
+        Value* Operand = UserInst->getOperand(1);
+        auto* OperandType = dyn_cast<IntegerType>(Operand->getType());
+        if (!OperandType || OperandType == AggregateElementType) {
+          continue;
+        }
+
+        Builder.SetInsertPoint(UserInst);
+        if (OperandType->getBitWidth() > AggregateElementType->getBitWidth()) {
+          llvm::Value* Trunc =
+              Builder.CreateTrunc(Operand, AggregateElementType, "_lvi_truncf");
+          UserInst->setOperand(1, Trunc);
+        } else {
+          llvm::Value* Ext = Builder.CreateSExt(Operand,
+                                                AggregateElementType, "_lvi_sext_f");
+          UserInst->setOperand(1, Ext);
+        }
+        // }
+      } else if (UserInst->getOpcode() == Instruction::Switch) {
+        auto* Switch = dyn_cast<llvm::SwitchInst>(UserInst);
+        assert(Switch);
+
+        // Condition should be a value we rewrote
+        auto* ConditionType = dyn_cast<IntegerType>(Switch->getCondition()->getType());
+        assert(ConditionType);
+
+        for (const llvm::SwitchInst::CaseHandle& Case : Switch->cases()) {
+          auto* NewConstant = dyn_cast<llvm::ConstantInt>(llvm::ConstantInt::get(
+              ConditionType, Case.getCaseValue()->getUniqueInteger().trunc(ConditionType->getBitWidth())));
+          Case.setValue(NewConstant);
+        }
+      } else if (UserInst->getOpcode() == Instruction::BitCast) {
+        // InType is a type we modified, out type is not
+        Value* BitCastIn = UserInst->getOperand(0);
+        auto* InType = dyn_cast<llvm::IntegerType>(BitCastIn->getType());
+        Type* OutType = UserInst->getType();
+        size_t OutTypeBitWidth = OutType->getPrimitiveSizeInBits();
+        IntegerType* OutTypeEquivalentInteger = Type::getIntNTy(Ctx, OutTypeBitWidth);
+
+        debug << "Considering bitcast " << *UserInst << "\n";
+        debug << "Casting " << *InType << " -> " << *OutType << " (width " << OutTypeBitWidth << ")\n";
+        debug << "Equivalent integer type is" << OutTypeEquivalentInteger << ")\n";
+
+        assert(InType);
+
+        Builder.SetInsertPoint(UserInst);
+        if (InType->getBitWidth() > OutTypeBitWidth) {
+          llvm::Value* Trunc =
+              Builder.CreateTrunc(BitCastIn, OutTypeEquivalentInteger, "_lvi_trunc_c");
+          UserInst->setOperand(0, Trunc);
+        } else {
+          llvm::Value* Ext = Builder.CreateSExt(BitCastIn,
+                                                OutTypeEquivalentInteger, "_lvi_sext_e");
+          UserInst->setOperand(0, Ext);
         }
       }
 
@@ -647,7 +731,7 @@ llvmGetPassPluginInfo() {
                                                auto) {  
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::PromotePass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
-          MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
+          // MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::AggressiveInstCombinePass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::VerifierPass()));
           return true;
