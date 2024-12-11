@@ -5,7 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_BUILD_TYPE Debug)
 
-add_compile_options(-g)
+add_compile_options(-g -O0 -fsanitize=address,undefined)
+add_link_options(-fsanitize=address,undefined)
 
 # Make LLVM_PATH configurable
 set(LLVM_PATH "" CACHE PATH "Path to LLVM installation (e.g., /usr/lib/llvm or /opt/llvm)")

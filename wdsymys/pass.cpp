@@ -12,6 +12,7 @@
 #include <llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h>
 
 #include <vector>
+#include <unordered_set>
 
 // #define DEBUG
 constexpr bool DEBUG = false;
@@ -19,7 +20,7 @@ constexpr bool DEBUG = false;
 class Debug {
   public:
   template <typename T>
-    auto& operator<<(const T& t) const {
+    auto& operator<<(const T& t) {
       if constexpr (DEBUG) {
         llvm::errs() << t;
       }
@@ -91,7 +92,7 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     llvm::LazyValueInfo& LVI = FAM.getResult<llvm::LazyValueAnalysis>(F);
 
     std::vector<Instruction*> InstructionsToRewrite;
-    std::vector<Instruction*> InstructionsToErase;
+    std::unordered_set<Instruction*> InstructionsToErase;
 
     llvm::DenseMap<llvm::Value*, llvm::IntegerType*> OriginalValueType;
     
@@ -132,11 +133,11 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               //UsesToReplace[I.get()] = dyn_cast<IntegerType>(I.getType());
               OriginalValueType[I.getOperand(0)] = IntType;
 
-              errs() << "I'm replacing " << I << " with " << *I.getOperand(0) << "\n";
+              debug << "I'm replacing " << I << " with " << *I.getOperand(0) << "\n";
 
               I.replaceAllUsesWith(I.getOperand(0));
               OriginalValueType[I.getOperand(0)] = IntType;
-              InstructionsToErase.push_back(&I);
+              InstructionsToErase.insert(&I);
 
               continue;
             }
@@ -165,14 +166,14 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               if (Instruction* UserInst =
                       dyn_cast<Instruction>(Use.getUser())) {
                 InstructionsToRewrite.push_back(UserInst);
-                errs() << "rewriting " << *UserInst << " because it uses a value we mutated\n";
-                errs() << "i belive it ";
+                debug << "rewriting " << *UserInst << " because it uses a value we mutated\n";
+                debug << "i belive it ";
                 if (llvm::isa<llvm::CallBase>(UserInst)) {
-                  errs() << "is ";
+                  debug << "is ";
                 } else {
-                  errs() << "is not ";
+                  debug << "is not ";
                 }
-                errs() << "a function\n";
+                debug << "a function\n";
               }
             }
           }
@@ -181,12 +182,13 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     }
 
     for (auto& [Use, NewValue] : OuterUsesToReplace) {
-        Use->set(NewValue);
-      }
+      Use->set(NewValue);
+    }
 
     // for (Instruction* I : InstructionsToErase) {
     //   I->eraseFromParent();
     // }
+    // InstructionsToErase.clear();
 
     for (Instruction* UserInst : InstructionsToRewrite) {
       llvm::DenseMap<llvm::Use*, llvm::Value*> UsesToReplace;
@@ -195,10 +197,10 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
       debug << "rewriting " << *UserInst << " now\n";
 
       if (llvm::isa<llvm::CallBase>(UserInst)) {
-        errs() << "im a function: " << *UserInst << "\n";
+        debug << "im a function: " << *UserInst << "\n";
         for (llvm::Use& FuncArg : UserInst->operands()) {
-          errs() << "other ptr: " << FuncArg << "\n";
-          errs() << "Im looking at the function arg " << FuncArg.get() << ": " << *FuncArg << "\n";
+          debug << "other ptr: " << FuncArg << "\n";
+          debug << "Im looking at the function arg " << FuncArg.get() << ": " << *FuncArg << "\n";
           if (OriginalValueType.count(FuncArg.get()) == 0) {
             continue;
           }
@@ -206,15 +208,15 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
           llvm::IntegerType* OriginalType = OriginalValueType[FuncArg.get()];
           llvm::IntegerType* CurrentType = dyn_cast<IntegerType>(FuncArg.get()->getType());
           
-          errs() << "The original type was: " << *OriginalType << "\n";
-          errs() << "We changed it to: " << *CurrentType << "\n";
+          debug << "The original type was: " << *OriginalType << "\n";
+          debug << "We changed it to: " << *CurrentType << "\n";
           Builder.SetInsertPoint(UserInst);
           if (OriginalType->getBitWidth() > CurrentType->getBitWidth()) {
-            errs() << "I am correcting the change by sexting\n";
+            debug << "I am correcting the change by sexting\n";
             llvm::Value* Ext = Builder.CreateSExt(FuncArg.get(), OriginalType, "_lvi_sext_c");
             UsesToReplace[&FuncArg] = Ext;
           } else if (OriginalType->getBitWidth() < CurrentType->getBitWidth()) {
-            errs() << "I am correcting the change by truncing\n";
+            debug << "I am correcting the change by truncing\n";
             llvm::Value* Trunc = Builder.CreateTrunc(FuncArg.get(), OriginalType, "_lvi_trunc_a");
             UsesToReplace[&FuncArg] = Trunc;
           }
@@ -333,10 +335,99 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                                                 FReturnType, "_lvi_sext_b");
           UserInst->setOperand(0, Ext);
         }
+      } else if (UserInst->getOpcode() == Instruction::Trunc) {
+        // changed the type of the operand to an existing trunc, we may have
+        // made it too small
+        auto* UserInstType = dyn_cast<IntegerType>(UserInst->getType());
+        assert(UserInstType);
+
+        auto* Operand = dyn_cast<Instruction>(UserInst->getOperand(0));
+        assert(Operand);
+
+        auto* OperandType = dyn_cast<IntegerType>(Operand->getType());
+        assert(OperandType);
+
+        // If the Trunc will succeed, it can live
+        if (UserInstType->getBitWidth() < OperandType->getBitWidth()) {
+          continue;
+        }
+
+        // If the Trunc is unnecessary, just remove it
+        if (UserInstType == OperandType) {
+          UserInst->replaceAllUsesWith(Operand);
+          InstructionsToErase.insert(UserInst);
+        }
+
+        debug << "Removing Trunc " << *UserInst << " because " << *UserInstType << " is too large for rewritten operand with type" << *OperandType << "\n";
+
+        // There was some reason to shrink this to the original type, so replace it with a SExt
+        Builder.SetInsertPoint(UserInst);
+        llvm::Value* Ext = Builder.CreateSExt(UserInst->getOperand(0),
+                                              UserInstType, "_lvi_sext_d");
+        UserInst->replaceAllUsesWith(Ext);
+        InstructionsToErase.insert(UserInst);
+      } else if (UserInst->getOpcode() == Instruction::SExt || UserInst->getOpcode() == Instruction::ZExt) {
+        // changed the type of the operand to an existing extension, we may have
+        // made it too large
+        auto* UserInstType = dyn_cast<IntegerType>(UserInst->getType());
+        assert(UserInstType);
+
+        auto* Operand = dyn_cast<Instruction>(UserInst->getOperand(0));
+        assert(Operand);
+
+        auto* OperandType = dyn_cast<IntegerType>(Operand->getType());
+        assert(OperandType);
+
+        // If the ext will succeed, it can live
+        if (UserInstType->getBitWidth() > OperandType->getBitWidth()) {
+          continue;
+        }
+
+        // If the ext is unnecessary, just remove it
+        if (UserInstType == OperandType) {
+          UserInst->replaceAllUsesWith(Operand);
+          InstructionsToErase.insert(UserInst);
+        }
+
+        debug << "Removing Trunc " << *UserInst << " because " << *UserInstType << " is too large for rewritten operand with type" << *OperandType << "\n";
+
+        // There was some reason to extend this to the original type, so replace it with a Trunc
+        Builder.SetInsertPoint(UserInst);
+        llvm::Value* Trunc = Builder.CreateTrunc(UserInst->getOperand(0),
+                                              UserInstType, "_lvi_trunc_e");
+        UserInst->replaceAllUsesWith(Trunc);
+        InstructionsToErase.insert(UserInst);
+      } else if (UserInst->getOpcode() == Instruction::InsertElement) {
+        auto* Vector = dyn_cast<llvm::VectorType>(UserInst->getOperand(0)->getType());
+        auto* VectorElementType = dyn_cast<IntegerType>(Vector->getElementType());
+
+        if (!VectorElementType) {
+          continue;
+        }
+
+        for (size_t i = 1; i < UserInst->getNumOperands(); i++) {
+          Value* Operand = UserInst->getOperand(i);
+          auto* OperandType = dyn_cast<IntegerType>(Operand->getType());
+
+          if (!OperandType || Operand->getType() == VectorElementType) {
+            continue;
+          }
+
+          Builder.SetInsertPoint(UserInst);
+          if (OperandType->getBitWidth() > VectorElementType->getBitWidth()) {
+            llvm::Value* Trunc =
+                Builder.CreateTrunc(UserInst->getOperand(i), VectorElementType, "_lvi_trunc_c");
+            UserInst->setOperand(i, Trunc);
+          } else {
+            llvm::Value* Ext = Builder.CreateSExt(UserInst->getOperand(i),
+                                                  VectorElementType, "_lvi_sext_e");
+            UserInst->setOperand(i, Ext);
+          }
+        }
       }
 
       for (auto& [Use, NewValue] : UsesToReplace) {
-        errs() << "Setting " << **Use << " to " << *NewValue << "\n";
+        debug << "Setting " << **Use << " to " << *NewValue << "\n";
         Use->set(NewValue);
       }
     }
@@ -345,21 +436,26 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     debug << "====:(){:|:&}:====\n";
     debug << F << "\n\n";
 
-    InstructionsToErase.clear();
+    // for (Instruction* I : InstructionsToErase) {
+    //   I->eraseFromParent();
+    // }
+    // InstructionsToErase.clear();
+
     for (auto& BB : F) {
       for (auto& I : BB) {
         if (I.getOpcode() == Instruction::SExt ||
             I.getOpcode() == Instruction::Trunc) {
           if (I.getOperand(0)->getType() == I.getType()) {
-            errs() << "I'm fucking with a sext or a trunc: " << I << "\n";
+            debug << "I'm fucking with a sext or a trunc: " << I << "\n";
             I.replaceAllUsesWith(I.getOperand(0));
-            InstructionsToErase.push_back(&I);
+            InstructionsToErase.insert(&I);
           }
         }
       }
     }
 
     for (Instruction* I : InstructionsToErase) {
+      debug << "Erasing instruction at " << I << ":" << *I << "\n";
       I->eraseFromParent();
     }
 
@@ -553,7 +649,7 @@ llvmGetPassPluginInfo() {
           MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::AggressiveInstCombinePass()));
-          // MPM.addPass(createModuleToFunctionPassAdaptor(llvm::VerifierPass()));
+          MPM.addPass(createModuleToFunctionPassAdaptor(llvm::VerifierPass()));
           return true;
         });
 
