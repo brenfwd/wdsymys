@@ -102,23 +102,26 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     debug << "====:(){:|:&}:==== " << F.getName() << " REWRITE LOGS ";
     debug << "====:(){:|:&}:====\n";
 
-    llvm::DenseMap<llvm::Use*, llvm::Value*> OuterUsesToReplace;
     for (auto& BB : F) {
       for (auto& I : BB) {
         if (I.getOpcode() == llvm::Instruction::Trunc || I.getOpcode() == llvm::Instruction::BitCast) {
           continue;
         }
 
-        if (IntegerType* IntType = dyn_cast<IntegerType>(I.getType())) {
+        if (auto* IntType = dyn_cast<IntegerType>(I.getType())) {
           debug << "Considering instruction " << I << "\n";
           auto CR = LVI.getConstantRange(&I, &I, true);
-          size_t BitWidth = CR.getUpper().getActiveBits();
+          // size_t BitWidth = CR.getUpper().getActiveBits();
+          size_t BitWidth = CR.getBitWidth();
           debug << I << " has range " << CR << " and bit width " << BitWidth << "\n";
+          // debug << "ConstantRange says bit width is " << CR.getBitWidth() << "\n";
           IntegerType* BestType = getBestIntegerType(BitWidth, Ctx);
 
-          llvm::DenseMap<llvm::Use*, llvm::Value*> OuterUsesToReplace;
-
           if (BestType != I.getType()) {
+            if (I.getOpcode() == llvm::Instruction::Call) {
+              continue;
+            }
+
             if (I.getOpcode() == llvm::Instruction::ZExt ||
                 I.getOpcode() == llvm::Instruction::SExt) {
               if (BestType != I.getOperand(0)->getType()) {
@@ -126,31 +129,15 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
               }
 
               for (llvm::Use& Use : I.uses()) {
-                if (Instruction* UserInst =
-                        dyn_cast<Instruction>(Use.getUser())) {
+                if (Instruction* UserInst = dyn_cast<Instruction>(Use.getUser())) {
                   InstructionsToRewrite.push_back(UserInst);
                 }
               }
-              //UsesToReplace[I.get()] = dyn_cast<IntegerType>(I.getType());
 
               debug << "I'm replacing " << I << " with " << *I.getOperand(0) << "\n";
 
               I.replaceAllUsesWith(I.getOperand(0));
               InstructionsToErase.insert(&I);
-
-              continue;
-            }
-
-            if (I.getOpcode() == llvm::Instruction::Call) {
-              Builder.SetInsertPoint(I.getNextNode());
-              llvm::Value* Trunc = Builder.CreateTrunc(
-                  &I, BestType, "_lvi_trunc_d");
-              
-              for (auto& use : I.uses()) {
-                if (use.getUser() != Trunc) {
-                  OuterUsesToReplace[&use] = Trunc;
-                }
-              }
 
               continue;
             }
@@ -176,10 +163,6 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
           }
         }
       }
-    }
-
-    for (auto& [Use, NewValue] : OuterUsesToReplace) {
-      Use->set(NewValue);
     }
 
     // for (Instruction* I : InstructionsToErase) {
