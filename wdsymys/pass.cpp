@@ -14,6 +14,8 @@
 #include <vector>
 #include <unordered_set>
 
+#include "../load-latency/load_latency_pass.h"
+
 // #define DEBUG
 constexpr bool DEBUG = false;
 
@@ -82,45 +84,6 @@ struct WDSYMYSPacking {
     bits_remaining = 64;
     to_pack.clear();
   }
-};
-
-struct LoadLatencyPass : public llvm::PassInfoMixin<LoadLatencyPass> {
-    static char ID;
-    llvm::PreservedAnalyses run(llvm::Function &F, llvm::FunctionAnalysisManager &AM) {
-        llvm::LLVMContext &Ctx = F.getContext();
-        llvm::Module *M = F.getParent();
-        llvm::IRBuilder<> Builder(Ctx);
-
-        llvm::Type *Int64Ty = llvm::Type::getInt64Ty(Ctx);
-        llvm::StructType *TimespecTy = llvm::StructType::create(Ctx, {Int64Ty, Int64Ty}, "timespec");
-
-        // just like, extern this, maybe a linker problem?
-        llvm::FunctionCallee NanoSleepFunc = M->getOrInsertFunction(
-            "nanosleep",
-            llvm::FunctionType::get(llvm::Type::getInt32Ty(Ctx),
-                {TimespecTy->getPointerTo(), TimespecTy->getPointerTo()},
-                false));
-
-        for (llvm::BasicBlock &BB : F) {
-            for (llvm::Instruction &I : BB) {
-                if (llvm::isa<llvm::LoadInst>(&I)) {
-                    Builder.SetInsertPoint(&I);
-
-                    // man page says this function is dumb and no like raw number
-                    llvm::AllocaInst *Timespec = Builder.CreateAlloca(TimespecTy);
-                    Builder.CreateStore(
-                        llvm::ConstantStruct::get(TimespecTy, {
-                            Builder.getInt64(0),     
-                            Builder.getInt64(1000)  
-                        }),
-                        Timespec);
-
-                    Builder.CreateCall(NanoSleepFunc, {Timespec, llvm::ConstantPointerNull::get(Timespec->getType())});
-                }
-            }
-        }
-        return llvm::PreservedAnalyses::none();
-    }
 };
 
 struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
@@ -757,19 +720,19 @@ llvmGetPassPluginInfo() {
           MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::AggressiveInstCombinePass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::VerifierPass()));
-          MPM.addPass(createModuleToFunctionPassAdaptor(LoadLatencyPass()));
+          // MPM.addPass(createModuleToFunctionPassAdaptor(LoadLatencyPass()));
           return true;
         });
 
-        PB.registerPipelineEarlySimplificationEPCallback(
-            [&](llvm::ModulePassManager& MPM, auto) {
-              MPM.addPass(createModuleToFunctionPassAdaptor(
-                  llvm::PromotePass()));
-              MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
-              MPM.addPass(createModuleToFunctionPassAdaptor(
-                  WDSYMYSPackingPass()));
-              MPM.addPass(createModuleToFunctionPassAdaptor(llvm::VerifierPass()));
-              return true;
-        });
+        // PB.registerPipelineEarlySimplificationEPCallback(
+        //     [&](llvm::ModulePassManager& MPM, auto) {
+        //       MPM.addPass(createModuleToFunctionPassAdaptor(
+        //           llvm::PromotePass()));
+        //       MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
+        //       MPM.addPass(createModuleToFunctionPassAdaptor(
+        //           WDSYMYSPackingPass()));
+        //       MPM.addPass(createModuleToFunctionPassAdaptor(llvm::VerifierPass()));
+        //       return true;
+        // });
     }};
 }

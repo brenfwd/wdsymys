@@ -1,0 +1,3 @@
+add_compile_definitions(LOCAL=1)
+
+add_llvm_pass_plugin(LoadLatency load_latency_pass.cpp)

@@ -52,5 +52,6 @@ endif()
 message(STATUS "OPT: ${LLVM_OPT_EXECUTABLE}")
 message(STATUS "CLANG: ${LLVM_CLANG_EXECUTABLE}")
 
+add_subdirectory(load-latency)
 add_subdirectory(wdsymys)
 add_subdirectory(testcases)
