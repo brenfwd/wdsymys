@@ -547,8 +547,9 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
     for (size_t i = 1; i < ToPack.size(); i++) {
       unsigned sz = ToPack[i].IntType->getBitWidth();
 
-      Builder.SetInsertPoint(
-          dyn_cast<Instruction>(ToPack[i].packedVal)->getNextNode());
+      Instruction* next = dyn_cast<Instruction>(ToPack[i].packedVal)->getNextNode();
+
+      Builder.SetInsertPoint(next);
       llvm::Value* Ext = Builder.CreateZExt(ToPack[i].packedVal, I64, "ext");
       llvm::Value* Shifted = Builder.CreateShl(
           Ext, llvm::ConstantInt::get(I64, ToPack[i].startBit), "shifted");
@@ -589,7 +590,7 @@ struct WDSYMYSPackingPass : public llvm::PassInfoMixin<WDSYMYSPackingPass> {
 
         Builder.SetInsertPoint(&I);
         if (IntegerType* IntType = dyn_cast<IntegerType>(I.getType())) {
-          if (!llvm::isa<llvm::PHINode>(&I)) {
+          if (!llvm::isa<llvm::PHINode>(&I) && !llvm::isa<llvm::InvokeInst>(&I)) {
             if (I.hasOneUse()) {
               if (auto* UserInstruction =
                       dyn_cast<Instruction>(*I.user_begin())) {
@@ -711,7 +712,7 @@ llvmGetPassPluginInfo() {
               return false;
             });
         PB.registerOptimizerLastEPCallback([&](llvm::ModulePassManager& MPM,
-                                               auto) {  
+                                               auto) {
           MPM.addPass(createModuleToFunctionPassAdaptor(llvm::PromotePass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
           MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSPackingPass()));
@@ -720,14 +721,15 @@ llvmGetPassPluginInfo() {
           return true;
         });
 
-        // PB.registerPipelineEarlySimplificationEPCallback(
-        //     [&](llvm::ModulePassManager& MPM, auto) {
-        //       MPM.addPass(createModuleToFunctionPassAdaptor(
-        //           llvm::PromotePass()));
-        //       MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
-        //       MPM.addPass(createModuleToFunctionPassAdaptor(
-        //           WDSYMYSPackingPass()));
-        //       return true;
-        //     });
-      }};
+        PB.registerPipelineEarlySimplificationEPCallback(
+            [&](llvm::ModulePassManager& MPM, auto) {
+              MPM.addPass(createModuleToFunctionPassAdaptor(
+                  llvm::PromotePass()));
+              MPM.addPass(createModuleToFunctionPassAdaptor(WDSYMYSLVIPass()));
+              MPM.addPass(createModuleToFunctionPassAdaptor(
+                  WDSYMYSPackingPass()));
+              MPM.addPass(createModuleToFunctionPassAdaptor(llvm::VerifierPass()));
+              return true;
+        });
+    }};
 }

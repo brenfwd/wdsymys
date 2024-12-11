@@ -863,7 +863,7 @@ struct if_
         > almost_type_;
  public:
     typedef typename almost_type_::type type;
-   
+
 };
 } using namespace algo_;
 namespace algo_ { template<> struct if_< void_,void_,void_ > { template< typename T1,typename T2,typename T3 , typename T4 =void_ ,typename T5 =void_ > struct apply : if_< T1,T2,T3 > { }; }; } using namespace algo_; template<> struct lambda< algo_:: if_< void_,void_,void_ > , void_ , int_<-1> > { typedef algo_:: if_< void_,void_,void_ > type; }; namespace aux { template< typename T1,typename T2,typename T3 > struct template_arity< algo_:: if_< T1,T2,T3 > > { static const int value = 3; }; template<> struct template_arity< algo_:: if_< void_,void_,void_ > > { static const int value = -1; }; }
@@ -1061,7 +1061,7 @@ struct not_
           ::boost::mpl::aux::nested_type_wknd<T>::value
         >
 {
-   
+
 };
 template<> struct not_< void_ > { template< typename T1 , typename T2 =void_ ,typename T3 =void_ ,typename T4 =void_ ,typename T5 =void_ > struct apply : not_< T1 > { }; }; template<> struct lambda< not_< void_ > , void_ , int_<-1> > { typedef not_< void_ > type; }; namespace aux { template< typename T1 > struct template_arity< not_< T1 > > { static const int value = 1; }; template<> struct template_arity< not_< void_ > > { static const int value = -1; }; }
 }
@@ -10878,7 +10878,7 @@ struct apply_if
     typedef typename if_<C,F1,F2>::type nullary_func_;
  public:
     typedef typename nullary_func_::type type;
-   
+
 };
 template<
       bool C
@@ -10903,7 +10903,7 @@ template<
 struct identity
 {
     typedef T type;
-   
+
 };
 template<
       typename T = void_
@@ -10911,7 +10911,7 @@ template<
 struct make_identity
 {
     typedef identity<T> type;
-   
+
 };
 template<> struct identity< void_ > { template< typename T1 , typename T2 =void_ ,typename T3 =void_ ,typename T4 =void_ ,typename T5 =void_ > struct apply : identity< T1 > { }; }; template<> struct lambda< identity< void_ > , void_ , int_<-1> > { typedef identity< void_ > type; }; namespace aux { template< typename T1 > struct template_arity< identity< T1 > > { static const int value = 1; }; template<> struct template_arity< identity< void_ > > { static const int value = -1; }; }
 template<> struct make_identity< void_ > { template< typename T1 , typename T2 =void_ ,typename T3 =void_ ,typename T4 =void_ ,typename T5 =void_ > struct apply : make_identity< T1 > { }; }; template<> struct lambda< make_identity< void_ > , void_ , int_<-1> > { typedef make_identity< void_ > type; }; namespace aux { template< typename T1 > struct template_arity< make_identity< T1 > > { static const int value = 1; }; template<> struct template_arity< make_identity< void_ > > { static const int value = -1; }; }
@@ -10922,7 +10922,7 @@ namespace mpl {
 template<> struct arg<-1>
 {
     static int const value = -1;
-   
+
     template<
           typename U1 = void_, typename U2 = void_, typename U3 = void_
         , typename U4 = void_, typename U5 = void_
@@ -10939,7 +10939,7 @@ template<> struct arg<1>
 {
     static int const value = 1;
     typedef arg<2> next;
-   
+
     template<
           typename U1 = void_, typename U2 = void_, typename U3 = void_
         , typename U4 = void_, typename U5 = void_
@@ -10956,7 +10956,7 @@ template<> struct arg<2>
 {
     static int const value = 2;
     typedef arg<3> next;
-   
+
     template<
           typename U1 = void_, typename U2 = void_, typename U3 = void_
         , typename U4 = void_, typename U5 = void_
@@ -10973,7 +10973,7 @@ template<> struct arg<3>
 {
     static int const value = 3;
     typedef arg<4> next;
-   
+
     template<
           typename U1 = void_, typename U2 = void_, typename U3 = void_
         , typename U4 = void_, typename U5 = void_
@@ -10990,7 +10990,7 @@ template<> struct arg<4>
 {
     static int const value = 4;
     typedef arg<5> next;
-   
+
     template<
           typename U1 = void_, typename U2 = void_, typename U3 = void_
         , typename U4 = void_, typename U5 = void_
@@ -11007,7 +11007,7 @@ template<> struct arg<5>
 {
     static int const value = 5;
     typedef arg<6> next;
-   
+
     template<
           typename U1 = void_, typename U2 = void_, typename U3 = void_
         , typename U4 = void_, typename U5 = void_
@@ -11168,7 +11168,7 @@ struct or_
         , T2, T3, T4, T5
         >
 {
-   
+
 };
 template<> struct or_< void_,void_ > { template< typename T1,typename T2 , typename T3 =void_ ,typename T4 =void_ ,typename T5 =void_ > struct apply : or_< T1,T2 > { }; }; template<> struct lambda< or_< void_,void_ > , void_ , int_<-1> > { typedef or_< void_,void_ > type; }; namespace aux { template< typename T1,typename T2,typename T3,typename T4,typename T5 > struct template_arity< or_< T1,T2,T3,T4,T5 > > { static const int value = 5; }; template<> struct template_arity< or_< void_,void_ > > { static const int value = -1; }; }
 }}
@@ -11218,7 +11218,7 @@ struct and_
         , T2, T3, T4, T5
         >
 {
-   
+
 };
 template<> struct and_< void_,void_ > { template< typename T1,typename T2 , typename T3 =void_ ,typename T4 =void_ ,typename T5 =void_ > struct apply : and_< T1,T2 > { }; }; template<> struct lambda< and_< void_,void_ > , void_ , int_<-1> > { typedef and_< void_,void_ > type; }; namespace aux { template< typename T1,typename T2,typename T3,typename T4,typename T5 > struct template_arity< and_< T1,T2,T3,T4,T5 > > { static const int value = 5; }; template<> struct template_arity< and_< void_,void_ > > { static const int value = -1; }; }
 }}
