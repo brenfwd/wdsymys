@@ -93,8 +93,6 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
     std::vector<Instruction*> InstructionsToRewrite;
     std::unordered_set<Instruction*> InstructionsToErase;
-
-    llvm::DenseMap<llvm::Value*, llvm::IntegerType*> OriginalValueType;
     
     
     debug << "====:(){:|:&}:==== " << F.getName() << " ORIGINAL IR ";
@@ -106,13 +104,14 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     llvm::DenseMap<llvm::Use*, llvm::Value*> OuterUsesToReplace;
     for (auto& BB : F) {
       for (auto& I : BB) {
-        if (I.getOpcode() == llvm::Instruction::Trunc) {
+        if (I.getOpcode() == llvm::Instruction::Trunc || I.getOpcode() == llvm::Instruction::BitCast) {
           continue;
         }
 
         if (IntegerType* IntType = dyn_cast<IntegerType>(I.getType())) {
           auto CR = LVI.getConstantRange(&I, &I, false);
           size_t BitWidth = CR.getUpper().getActiveBits();
+          debug << I << " has range " << CR << " and bit width " << BitWidth << "\n";
           IntegerType* BestType = getBestIntegerType(BitWidth, Ctx);
 
           llvm::DenseMap<llvm::Use*, llvm::Value*> OuterUsesToReplace;
@@ -131,12 +130,10 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                 }
               }
               //UsesToReplace[I.get()] = dyn_cast<IntegerType>(I.getType());
-              OriginalValueType[I.getOperand(0)] = IntType;
 
               debug << "I'm replacing " << I << " with " << *I.getOperand(0) << "\n";
 
               I.replaceAllUsesWith(I.getOperand(0));
-              OriginalValueType[I.getOperand(0)] = IntType;
               InstructionsToErase.insert(&I);
 
               continue;
@@ -153,14 +150,12 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                 }
               }
 
-              OriginalValueType[Trunc] = IntType;
               continue;
             }
 
-            OriginalValueType[&I] = IntType;
             I.mutateType(BestType);
             InstructionsToRewrite.push_back(&I);
-            debug << "rewriting " << I << " because we mutated its type\n";
+            debug << "rewriting " << I << " @ << " << &I << " because we mutated its type, original type is " << *IntType << "\n";
 
             for (llvm::Use& Use : I.uses()) {
               if (Instruction* UserInst =
@@ -196,21 +191,29 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
       debug << "rewriting " << *UserInst << " now\n";
 
-      if (llvm::isa<llvm::CallBase>(UserInst)) {
-        debug << "im a function: " << *UserInst << "\n";
-        for (llvm::Use& FuncArg : UserInst->operands()) {
+      if (auto* FunctionCall = dyn_cast<llvm::CallBase>(UserInst)) {
+        debug << "im a function call: " << *FunctionCall << "\n";
+        llvm::Function* CalledFunction = FunctionCall->getCalledFunction();
+        for (size_t i = 0; i < CalledFunction->arg_size(); i++) {
+          llvm::Use& FuncArg = UserInst->getOperandUse(i);
           debug << "other ptr: " << FuncArg << "\n";
           debug << "Im looking at the function arg " << FuncArg.get() << ": " << *FuncArg << "\n";
-          if (OriginalValueType.count(FuncArg.get()) == 0) {
+          auto* OriginalType = dyn_cast<IntegerType>(CalledFunction->getArg(FuncArg.getOperandNo())->getType());
+          auto* CurrentType = dyn_cast<IntegerType>(FuncArg.get()->getType());
+
+          // if they're not ints we didn't mess with them
+          if (!OriginalType || !CurrentType) {
+            debug << "types not int, ignoring\n";
             continue;
           }
 
-          llvm::IntegerType* OriginalType = OriginalValueType[FuncArg.get()];
-          llvm::IntegerType* CurrentType = dyn_cast<IntegerType>(FuncArg.get()->getType());
-          
+          debug << "Arg number is: " << FuncArg.getOperandNo() << "\n";
+          debug << "Corresponding argument is: " << *CalledFunction->getArg(FuncArg.getOperandNo())
+                << "\n";
+
           debug << "The original type was: " << *OriginalType << "\n";
           debug << "We changed it to: " << *CurrentType << "\n";
-          Builder.SetInsertPoint(UserInst);
+          Builder.SetInsertPoint(FunctionCall);
           if (OriginalType->getBitWidth() > CurrentType->getBitWidth()) {
             debug << "I am correcting the change by sexting\n";
             llvm::Value* Ext = Builder.CreateSExt(FuncArg.get(), OriginalType, "_lvi_sext_c");
@@ -248,6 +251,10 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
             }
 
             if (auto* ConstantOperand = dyn_cast<llvm::Constant>(Operand)) {
+              if (isa<llvm::UndefValue>(ConstantOperand) || isa<llvm::PoisonValue>(ConstantOperand)) {
+                continue;
+              }
+
               size_t ConstantBitWidth =
                   ConstantOperand->getUniqueInteger().getActiveBits();
               if (ConstantBitWidth > LargestOperandType->getBitWidth()) {
@@ -269,10 +276,19 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
             }
 
             if (auto* ConstantOperand = dyn_cast<llvm::Constant>(Operand)) {
-              llvm::Constant* NewConstant = llvm::ConstantInt::get(
-                  LargestOperandType, ConstantOperand->getUniqueInteger().trunc(
-                                          LargestOperandType->getBitWidth()));
-              UsesToReplace[&Operand] = NewConstant;
+              if (isa<llvm::UndefValue>(ConstantOperand)) {
+                llvm::Constant* NewConstant = llvm::UndefValue::get(LargestOperandType);
+                UsesToReplace[&Operand] = NewConstant;
+              } else if (isa<llvm::PoisonValue>(ConstantOperand)) {
+                llvm::Constant* NewConstant = llvm::PoisonValue::get(LargestOperandType);
+                UsesToReplace[&Operand] = NewConstant;
+              } else {
+                llvm::Constant* NewConstant = llvm::ConstantInt::get(
+                    LargestOperandType, ConstantOperand->getUniqueInteger().trunc(
+                                            LargestOperandType->getBitWidth()));
+                UsesToReplace[&Operand] = NewConstant;
+              }
+
             } else if (Operand.get()->getType() != LargestOperandType) {
               Instruction* InsertPoint = UserInst;
 
@@ -291,18 +307,6 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
             }
           }
 
-          if (UserInst->getOpcode() == Instruction::PHI) {
-            for (llvm::Use& Operand : UserInst->operands()) {
-              if (auto* PhiPrecursor =
-                      dyn_cast<Instruction>(Operand.getUser())) {
-                if (OriginalValueType.contains(PhiPrecursor)) {
-                  OriginalValueType[UserInst] = OriginalValueType[PhiPrecursor];
-                  break;
-                }
-              }
-            }
-          }
-
           // Truncate instruction result if possible
           if (UserInstType != LargestOperandType &&
               UserInst->getOpcode() != Instruction::ICmp) {
@@ -315,10 +319,6 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
                    << "\n";
             llvm::Value* Trunc =
                 Builder.CreateTrunc(UserInst, UserInstType, "_lvi_trunc_b");
-            if (OriginalValueType.contains(UserInst)) {
-              OriginalValueType[Trunc] = OriginalValueType[UserInst];
-            }
-
             for (auto& use : UserInst->uses()) {
               if (use.getUser() != Trunc) {
                 UsesToReplace[&use] = Trunc;
