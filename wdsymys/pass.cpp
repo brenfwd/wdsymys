@@ -13,6 +13,7 @@
 
 #include <vector>
 #include <unordered_set>
+#include <format>
 
 #include "../load-latency/load_latency_pass.h"
 
@@ -96,8 +97,10 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
     std::vector<Instruction*> InstructionsToRewrite;
     std::unordered_set<Instruction*> InstructionsToErase;
-    
-    
+
+    size_t n_instructions_rewritten = 0;
+    size_t n_instructions_eligible = 0;
+
     debug << "====:(){:|:&}:==== " << F.getName() << " ORIGINAL IR ";
     debug << "====:(){:|:&}:====\n";
     debug << F << "\n\n";
@@ -112,14 +115,23 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
 
         if (auto* IntType = dyn_cast<IntegerType>(I.getType())) {
           debug << "Considering instruction " << I << "\n";
-          auto CR = LVI.getConstantRange(&I, &I, true);
-          // size_t BitWidth = CR.getUpper().getActiveBits();
-          size_t BitWidth = CR.getBitWidth();
+          n_instructions_eligible++;
+          auto CR = LVI.getConstantRange(&I, &I, false);
+
+          size_t BitWidth = CR.getUpper().slt(CR.getLower()) ? CR.getBitWidth() : CR.getUpper().getActiveBits();
+          // if (!CR.isFullSet()) {
+          //   errs() << "LVI: CR is not full set: " << CR << "\n";
+          //   errs() << "LVI: has bit width: " << BitWidth << "\n";
+          //   IntegerType* BestType = getBestIntegerType(BitWidth, Ctx);
+          //   errs() << "LVI: Best type is " << *BestType << ", original type " << *I.getType() << "\n";
+          // }
+
           debug << I << " has range " << CR << " and bit width " << BitWidth << "\n";
           // debug << "ConstantRange says bit width is " << CR.getBitWidth() << "\n";
           IntegerType* BestType = getBestIntegerType(BitWidth, Ctx);
 
           if (BestType != I.getType()) {
+            n_instructions_rewritten++;
             if (I.getOpcode() == llvm::Instruction::Call) {
               continue;
             }
@@ -528,6 +540,12 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
       I->eraseFromParent();
     }
 
+    double percent_rewritten = static_cast<double>(n_instructions_rewritten) / static_cast<double>(n_instructions_eligible) * 100;
+    if (n_instructions_eligible == 0) {
+      percent_rewritten = 0;
+    }
+    // errs() << "LVI: in " << F.getName() << " can narrow " << n_instructions_rewritten << "/" << n_instructions_eligible
+    // << std::format(" ({:.2f}%)\n", percent_rewritten);
     return llvm::PreservedAnalyses::none();
   }
 };
