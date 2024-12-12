@@ -101,11 +101,11 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
     size_t n_instructions_rewritten = 0;
     size_t n_instructions_eligible = 0;
 
-    debug << "====:(){:|:&}:==== " << F.getName() << " ORIGINAL IR ";
-    debug << "====:(){:|:&}:====\n";
+    debug << "======== " << F.getName() << " ORIGINAL IR ";
+    debug << "========\n";
     debug << F << "\n\n";
-    debug << "====:(){:|:&}:==== " << F.getName() << " REWRITE LOGS ";
-    debug << "====:(){:|:&}:====\n";
+    debug << "======== " << F.getName() << " REWRITE LOGS ";
+    debug << "========\n";
 
     for (auto& BB : F) {
       for (auto& I : BB) {
@@ -527,7 +527,6 @@ struct WDSYMYSLVIPass : public llvm::PassInfoMixin<WDSYMYSLVIPass> {
         if (I.getOpcode() == Instruction::SExt ||
             I.getOpcode() == Instruction::Trunc) {
           if (I.getOperand(0)->getType() == I.getType()) {
-            debug << "I'm fucking with a sext or a trunc: " << I << "\n";
             I.replaceAllUsesWith(I.getOperand(0));
             InstructionsToErase.insert(&I);
           }
